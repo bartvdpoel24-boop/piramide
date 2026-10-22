@@ -9,6 +9,7 @@ import {
   nudgeLadderPlayer,
   recordResult,
   removeLadderPlayer,
+  renameMe,
   respondChallenge,
   setAvailability,
 } from "@/lib/pyramid/api";
@@ -119,6 +120,14 @@ function LiveLadder() {
         data.amOwner
           ? async (name) => {
               await addLadderPlayer({ data: { ladderId: id, name } });
+              await load();
+            }
+          : undefined
+      }
+      onRename={
+        data.meId
+          ? async (name) => {
+              await renameMe({ data: { ladderId: id, name } });
               await load();
             }
           : undefined

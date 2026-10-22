@@ -50,6 +50,7 @@ export type LadderActions = {
   onNudge?: (playerId: string, direction: -1 | 1) => Promise<void>;
   onRemove?: (playerId: string) => Promise<void>;
   onAdd?: (name: string) => Promise<void>;
+  onRename?: (name: string) => Promise<void>;
   onPersona?: (playerId: string) => void;
   onReset?: () => void;
 };
@@ -281,6 +282,11 @@ export function LadderScreen(props: Props) {
           onRemove={
             props.onRemove ? () => void run(() => props.onRemove?.(selected.id), "Briefje van de muur.") : undefined
           }
+          onRename={
+            props.onRename && me && selected.id === me.id
+              ? (name) => void run(() => props.onRename?.(name), "Naam gewijzigd.")
+              : undefined
+          }
         />
       ) : (
         <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
@@ -382,6 +388,33 @@ export function LadderScreen(props: Props) {
   );
 }
 
+function RenameForm({ name, onRename }: { name: string; onRename: (name: string) => void }) {
+  const [value, setValue] = useState(name);
+  return (
+    <form
+      className="mt-3 flex flex-col gap-2 sm:flex-row"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onRename(value);
+      }}
+    >
+      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+        Jouw naam
+        <input
+          className="field"
+          value={value}
+          maxLength={40}
+          aria-label="Jouw naam"
+          onChange={(event) => setValue(event.target.value)}
+        />
+      </label>
+      <button type="submit" className="btn btn-brass sm:self-end" disabled={value.trim() === name}>
+        Bewaren
+      </button>
+    </form>
+  );
+}
+
 function PlayerPanel({
   player,
   me,
@@ -392,6 +425,7 @@ function PlayerPanel({
   onResult,
   onNudge,
   onRemove,
+  onRename,
 }: {
   player: Player;
   me: Player | null;
@@ -402,6 +436,7 @@ function PlayerPanel({
   onResult: (leftId: string, rightId: string, lockPair: boolean) => void;
   onNudge?: (direction: -1 | 1) => void;
   onRemove?: () => void;
+  onRename?: (name: string) => void;
 }) {
   const upward = me ? canChallengeUp(me.rank, player.rank, range) : false;
   const betweenUs = me ? legalDistance(me.rank, player.rank, range) : false;
@@ -442,6 +477,7 @@ function PlayerPanel({
           ) : null}
         </div>
       </div>
+      {onRename ? <RenameForm key={player.name} name={player.name} onRename={onRename} /> : null}
       {player.availability.length > 0 ? (
         <p className="mt-3 text-sm text-ivory-dim">
           Vrij: {player.availability.map((slot) => fmtSlot(slot)).join(" · ")}

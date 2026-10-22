@@ -26,6 +26,7 @@ type DemoActions = {
   nudge: (playerId: string, direction: -1 | 1) => void;
   remove: (playerId: string) => void;
   add: (name: string) => void;
+  rename: (name: string) => void;
 };
 
 export const useDemoStore = create<DemoState & DemoActions>()(
@@ -156,6 +157,17 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               availability: [],
             },
           ],
+        });
+      },
+      rename: (name) => {
+        const clean = cleanName(name);
+        const { players, personaId } = get();
+        if (!players.some((player) => player.id === personaId)) throw new Error("Speler niet gevonden.");
+        if (players.some((player) => player.id !== personaId && player.name.toLowerCase() === clean.toLowerCase())) {
+          throw new Error("Die naam staat al op de ladder.");
+        }
+        set({
+          players: players.map((player) => (player.id === personaId ? { ...player, name: clean } : player)),
         });
       },
     }),

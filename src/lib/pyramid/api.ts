@@ -622,6 +622,35 @@ export const removeLadderPlayer = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const renameMe = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; name: string }) => ({
+    ladderId: String(input?.ladderId ?? ""),
+    name: cleanName(input?.name ?? ""),
+  }))
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    await requireLadder(sql, context.userId, data.ladderId);
+    const mine = await sql<{ id: string }>`
+      select id from ladder_players
+      where ladder_id = ${data.ladderId} and user_id = ${context.userId}
+    `;
+    const me = mine[0];
+    if (!me) throw new Error("Koppel eerst je naam aan de ladder.");
+    const dupes = await sql<{ id: string }>`
+      select id from ladder_players
+      where ladder_id = ${data.ladderId}
+        and id <> ${me.id}
+        and lower(display_name) = lower(${data.name})
+    `;
+    if (dupes[0]) throw new Error("Die naam staat al op de ladder.");
+    await sql`
+      update ladder_players set display_name = ${data.name}
+      where id = ${me.id} and ladder_id = ${data.ladderId}
+    `;
+    return { ok: true };
+  });
+
 export const addLadderPlayer = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { ladderId: string; name: string }) => ({
