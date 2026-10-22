@@ -476,7 +476,7 @@ function ChallengeList({
             </p>
             {open ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                {challenge.status === "open" && (againstMe || amOwner) ? (
+                {challenge.status === "open" && againstMe ? (
                   <>
                     <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={() => onRespond(challenge.id, "accept")}>
                       Accepteren
@@ -485,6 +485,8 @@ function ChallengeList({
                       Afwijzen
                     </button>
                   </>
+                ) : challenge.status === "open" ? (
+                  <p className="basis-full text-sm text-ivory-dim">Alleen {name(challenge.defenderId)} kan accepteren.</p>
                 ) : null}
                 {(mine || amOwner) && (
                   <button type="button" className="btn btn-ghost h-10 min-h-0 text-sm" onClick={() => onRespond(challenge.id, "cancel")}>

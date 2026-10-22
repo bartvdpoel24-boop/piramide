@@ -81,7 +81,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           throw new Error("Alleen de uitdager trekt dit in.");
         }
         if (action !== "cancel" && challenge.defenderId !== me) {
-          throw new Error("Alleen de uitgedaagde reageert.");
+          throw new Error("Je kunt alleen een uitdaging accepteren of afwijzen die voor jou is.");
         }
         if (challenge.status !== "open" && !(action === "cancel" && challenge.status === "accepted")) {
           throw new Error("Deze uitdaging is al afgerond.");

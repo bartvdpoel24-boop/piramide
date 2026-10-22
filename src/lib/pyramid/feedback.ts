@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 
 const REPO = "bartvdpoel24-boop/piramide";
+const TOKEN_FILE = "/tmp/grok/connectors/github.token";
 
 const KINDS = {
   bug: "Bug",
@@ -30,25 +32,57 @@ function scrub(value: string) {
     .slice(0, 180);
 }
 
-function readGhToken() {
-  const fromEnv = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
+function usableToken(value: string) {
+  const token = value.trim();
+  if (!/^(gho_|ghu_|ghp_|github_pat_)[A-Za-z0-9_]+$/.test(token)) return "";
+  if (token.length < 20 || token.length > 255) return "";
+  return token;
+}
+
+async function tokenFromGh(bin: string) {
   return new Promise<string>((resolve, reject) => {
     execFile(
-      "gh",
+      bin,
       ["auth", "token"],
-      { timeout: 8000, env: { ...process.env, GH_PROMPT_DISABLED: "1" } },
+      {
+        timeout: 8000,
+        env: {
+          ...process.env,
+          GH_PROMPT_DISABLED: "1",
+          PATH: `/usr/local/bin:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        },
+      },
       (error, stdout, stderr) => {
         if (error) {
           reject(new Error(scrub(String(stderr || error.message)) || "Geen GitHub-token."));
           return;
         }
-        const token = String(stdout).trim();
+        const token = usableToken(String(stdout));
         if (!token) reject(new Error("Geen GitHub-token."));
         else resolve(token);
       },
     );
   });
+}
+
+async function readGhToken() {
+  const fromEnv = usableToken(process.env.GITHUB_TOKEN ?? "") || usableToken(process.env.GH_TOKEN ?? "");
+  if (fromEnv) return fromEnv;
+  try {
+    const fromFile = usableToken(await readFile(TOKEN_FILE, "utf8"));
+    if (fromFile) return fromFile;
+  } catch {
+    /* alleen aanwezig in de preview */
+  }
+  let last = "Geen GitHub-token.";
+  for (const bin of ["/usr/local/bin/gh", "gh"]) {
+    try {
+      return await tokenFromGh(bin);
+    } catch (error) {
+      last = error instanceof Error ? error.message : last;
+    }
+  }
+  throw new Error(last);
 }
 
 export const submitFeedback = createServerFn({ method: "POST" })

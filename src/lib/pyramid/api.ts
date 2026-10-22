@@ -486,7 +486,7 @@ export const respondChallenge = createServerFn({ method: "POST" })
         throw new Error("Deze uitdaging is al afgerond.");
       }
     } else {
-      if (!isDefender && !access.amOwner) throw new Error("Alleen de uitgedaagde reageert.");
+      if (!isDefender) throw new Error("Je kunt alleen een uitdaging accepteren of afwijzen die voor jou is.");
       if (challenge.status !== "open") throw new Error("Deze uitdaging is al beantwoord.");
     }
     const status = data.action === "accept" ? "accepted" : data.action === "decline" ? "declined" : "cancelled";
