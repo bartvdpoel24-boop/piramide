@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, cleanName, settleMatch } from "./rules";
+import { canChallengeUp, cleanName, normalizeSlots, settleMatch } from "./rules";
 import { noteForIndex, WALL } from "./roster";
 import {
   CHALLENGE_RANGE,
@@ -58,7 +58,7 @@ async function loadPlayers(sql: Sql, ladderId: string): Promise<Player[]> {
     from ladder_availability a
     join ladder_players p on p.id = a.player_id
     where p.ladder_id = ${ladderId}
-    order by a.day
+    order by a.day, a.start_min
   `;
   const byPlayer = new Map<string, Slot[]>();
   for (const slot of slots) {
@@ -380,22 +380,7 @@ export const setAvailability = createServerFn({ method: "POST" })
   .validator((input: { ladderId: string; slots: Slot[] }) => {
     if (!input?.ladderId) throw new Error("Ladder ontbreekt.");
     const slots = Array.isArray(input.slots) ? input.slots : [];
-    const clean: Slot[] = [];
-    const seen = new Set<number>();
-    for (const slot of slots) {
-      const day = Number(slot.day);
-      const startMin = Number(slot.startMin);
-      const endMin = Number(slot.endMin);
-      if (!Number.isInteger(day) || day < 0 || day > 6) throw new Error("Kies een geldige dag.");
-      if (seen.has(day)) throw new Error("Eén tijdvenster per dag.");
-      if (!Number.isInteger(startMin) || !Number.isInteger(endMin) || endMin - startMin < 30) {
-        throw new Error("Een tijdvenster is minstens een half uur.");
-      }
-      if (startMin < 0 || endMin > 24 * 60) throw new Error("Tijd valt buiten de dag.");
-      seen.add(day);
-      clean.push({ day, startMin, endMin });
-    }
-    return { ladderId: input.ladderId, slots: clean };
+    return { ladderId: String(input.ladderId), slots: normalizeSlots(slots) };
   })
   .handler(async ({ context, data }) => {
     const sql = await db();
@@ -404,8 +389,8 @@ export const setAvailability = createServerFn({ method: "POST" })
     await sql`delete from ladder_availability where player_id = ${access.meId}`;
     for (const slot of data.slots) {
       await sql`
-        insert into ladder_availability (player_id, day, start_min, end_min)
-        values (${access.meId}, ${slot.day}, ${slot.startMin}, ${slot.endMin})
+        insert into ladder_availability (id, player_id, day, start_min, end_min)
+        values (${crypto.randomUUID()}, ${access.meId}, ${slot.day}, ${slot.startMin}, ${slot.endMin})
       `;
     }
     return { ok: true };

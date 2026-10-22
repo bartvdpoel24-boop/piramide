@@ -117,6 +117,30 @@ export function pyramidRows<T extends { rank: number }>(players: T[]) {
   return rows;
 }
 
+export function normalizeSlots(slots: Slot[]) {
+  if (slots.length > 28) throw new Error("Te veel tijdvensters.");
+  const clean: Slot[] = [];
+  for (const slot of slots) {
+    const day = Number(slot.day);
+    const startMin = Number(slot.startMin);
+    const endMin = Number(slot.endMin);
+    if (!Number.isInteger(day) || day < 0 || day > 6) throw new Error("Kies een geldige dag.");
+    if (!Number.isInteger(startMin) || !Number.isInteger(endMin) || endMin - startMin < 30) {
+      throw new Error("Een tijdvenster is minstens een half uur.");
+    }
+    if (startMin < 0 || endMin > 24 * 60) throw new Error("Tijd valt buiten de dag.");
+    const sameDay = clean.filter((item) => item.day === day);
+    if (sameDay.length >= 4) throw new Error("Hooguit vier tijden op één dag.");
+    for (const other of sameDay) {
+      if (Math.min(other.endMin, endMin) > Math.max(other.startMin, startMin)) {
+        throw new Error("Tijden op dezelfde dag mogen niet overlappen.");
+      }
+    }
+    clean.push({ day, startMin, endMin });
+  }
+  return clean.sort((a, b) => a.day - b.day || a.startMin - b.startMin);
+}
+
 export function overlapSlots(a: Slot[], b: Slot[]): Slot[] {
   const found: Slot[] = [];
   for (const left of a) {

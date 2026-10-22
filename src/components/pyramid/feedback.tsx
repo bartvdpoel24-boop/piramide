@@ -2,9 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { MessageSquarePlus } from "lucide-react";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { submitFeedback } from "@/lib/pyramid/feedback";
 import { cn } from "@/lib/cn";
-
-const REPO = "bartvdpoel24-boop/piramide";
 
 const KINDS = [
   { id: "bug", label: "Bug" },
@@ -14,20 +13,13 @@ const KINDS = [
 
 type Kind = (typeof KINDS)[number]["id"];
 
-function issueUrl(input: { kind: Kind; title: string; message: string; who: string; place?: string }) {
-  const kind = KINDS.find((item) => item.id === input.kind)?.label ?? "Feedback";
-  const title = `[${kind}] ${input.title.trim()}`;
-  const lines = [
-    input.message.trim(),
-    "",
-    "---",
-    `Soort: ${kind}`,
-    input.who ? `Van: ${input.who}` : null,
-    input.place ? `Plek: ${input.place}` : null,
-    `Scherm: ${window.location.pathname}`,
-  ].filter((line): line is string => line !== null);
-  const params = new URLSearchParams({ title, body: lines.join("\n") });
-  return `https://github.com/${REPO}/issues/new?${params.toString()}`;
+function errorText(error: unknown) {
+  if (error instanceof Error && error.message === "Unauthorized") {
+    return "Log in met Google. Dan komt de melding direct op GitHub.";
+  }
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  return "De melding kon niet geplaatst worden.";
 }
 
 export function FeedbackButton({ place }: { place?: string }) {
@@ -36,7 +28,9 @@ export function FeedbackButton({ place }: { place?: string }) {
   const [kind, setKind] = useState<Kind>("bug");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
-  const [href, setHref] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ number: number; url: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const signedIn = user && !user.isDevFallback ? user : null;
   const [who, setWho] = useState("");
 
@@ -50,27 +44,40 @@ export function FeedbackButton({ place }: { place?: string }) {
     setKind("bug");
     setTitle("");
     setMessage("");
-    setHref(null);
+    setCreated(null);
+    setError(null);
+    setPending(false);
     setWho(signedIn?.displayName ?? "");
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
+    setPending(true);
+    setError(null);
     const name = who.trim();
     const from = [name, signedIn?.primaryEmail].filter(Boolean).join(" · ");
-    const url = issueUrl({ kind, title, message, who: from, place });
-    const popup = window.open(url, "_blank");
-    if (popup) popup.opener = null;
-    setHref(url);
+    try {
+      const result = await submitFeedback({
+        data: {
+          kind,
+          title,
+          message,
+          who: from,
+          place,
+          screen: window.location.pathname,
+        },
+      });
+      setCreated(result);
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
     <>
-      <button
-        type="button"
-        className="btn btn-ghost"
-        onClick={() => setOpen(true)}
-      >
+      <button type="button" className="btn btn-ghost" onClick={() => setOpen(true)}>
         <MessageSquarePlus className="size-4" aria-hidden />
         Geef feedback
       </button>
@@ -80,17 +87,15 @@ export function FeedbackButton({ place }: { place?: string }) {
           <Dialog.Content className="sheet">
             <Dialog.Title className="font-display text-3xl italic">Geef feedback</Dialog.Title>
             <Dialog.Description className="mt-1 text-sm text-ink/70">
-              Bug, idee of vraag. Dit wordt een melding in de GitHub-repo van Piramide. Je bevestigt hem daar nog
-              één keer.
+              Bug, idee of vraag. Dit wordt meteen een melding in de GitHub-repo van Piramide.
             </Dialog.Description>
-            {href ? (
+            {created ? (
               <div className="mt-4 flex flex-col gap-3">
                 <p className="text-sm text-ink/80">
-                  GitHub is geopend met je tekst erin. Kies daar <span className="font-semibold">Submit new issue</span>
-                  . Lukt het venster niet, gebruik dan de knop hieronder.
+                  Melding <span className="font-semibold">#{created.number}</span> staat op GitHub.
                 </p>
-                <a href={href} target="_blank" rel="noreferrer" className="btn btn-ink">
-                  Melding openen op GitHub
+                <a href={created.url} target="_blank" rel="noreferrer" className="btn btn-ink">
+                  Bekijk de melding
                 </a>
                 <button type="button" className="btn btn-quiet" onClick={close}>
                   Klaar
@@ -144,9 +149,10 @@ export function FeedbackButton({ place }: { place?: string }) {
                     placeholder="Optioneel"
                   />
                 </label>
+                {error ? <p className="text-sm text-ink">{error}</p> : null}
                 <div className="flex gap-2">
-                  <button type="submit" className="btn btn-ink flex-1">
-                    Melding plaatsen
+                  <button type="submit" className="btn btn-ink flex-1" disabled={pending}>
+                    {pending ? "Bezig…" : "Melding plaatsen"}
                   </button>
                   <Dialog.Close type="button" className="btn btn-quiet">
                     Terug

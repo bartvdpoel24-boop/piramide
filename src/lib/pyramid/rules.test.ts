@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canChallengeUp, legalDistance, nudgePlayer, removePlayer, settleMatch } from "./rules.ts";
+import { canChallengeUp, legalDistance, normalizeSlots, nudgePlayer, removePlayer, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
 function player(id: string, rank: number): Player {
@@ -51,6 +51,25 @@ describe("piramide rules", () => {
     assert.equal(result.players.find((item) => item.id === "a")?.stippen, 0);
     assert.equal(result.players.find((item) => item.id === "b")?.rank, 2);
     assert.throws(() => settleMatch(four, "a", "d", 1, 0), /4 plaatsen/);
+  });
+
+  it("allows several times on one day and rejects an overlap", () => {
+    const slots = normalizeSlots([
+      { day: 1, startMin: 16 * 60, endMin: 17 * 60 },
+      { day: 1, startMin: 12 * 60, endMin: 13 * 60 },
+    ]);
+    assert.deepEqual(slots, [
+      { day: 1, startMin: 12 * 60, endMin: 13 * 60 },
+      { day: 1, startMin: 16 * 60, endMin: 17 * 60 },
+    ]);
+    assert.throws(
+      () =>
+        normalizeSlots([
+          { day: 1, startMin: 12 * 60, endMin: 13 * 60 },
+          { day: 1, startMin: 12 * 60 + 30, endMin: 14 * 60 },
+        ]),
+      /overlappen/,
+    );
   });
 
   it("nudges and closes the gap after a removal", () => {
