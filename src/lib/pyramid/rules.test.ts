@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canChallengeUp, legalDistance, normalizeSlots, nudgePlayer, removePlayer, settleMatch } from "./rules.ts";
+import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, removePlayer, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
 function player(id: string, rank: number): Player {
@@ -22,6 +22,13 @@ describe("piramide rules", () => {
     assert.equal(canChallengeUp(5, 1, 4), true);
     assert.equal(canChallengeUp(6, 1, 4), false);
     assert.equal(canChallengeUp(2, 3, 4), false);
+    assert.equal(canInviteDown(2, 3, 4), true);
+    assert.equal(canInviteDown(2, 6, 4), true);
+    assert.equal(canInviteDown(2, 7, 4), false);
+    assert.equal(canInviteDown(3, 2, 4), false);
+    assert.equal(isPyramidAdmin({ id: "p-bart", name: "Iemand anders" }), true);
+    assert.equal(isPyramidAdmin({ id: "x", name: "Bart van der Poel" }), true);
+    assert.equal(isPyramidAdmin({ id: "x", name: "Louis" }), false);
     assert.equal(legalDistance(1, 5, 4), true);
     assert.equal(legalDistance(1, 6, 4), false);
   });

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { canChallengeUp, cleanName, nudgePlayer, removePlayer, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, removePlayer, settleMatch } from "./rules";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
 import { CHALLENGE_RANGE, type SettleResult, type Slot } from "./types";
 
@@ -13,6 +13,7 @@ type DemoActions = {
     day: number | null;
     startMin: number | null;
     message: string;
+    kind: "challenge" | "invite";
   }) => void;
   respond: (id: string, action: "accept" | "decline" | "cancel") => void;
   record: (input: {
@@ -43,13 +44,20 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           ),
         });
       },
-      challenge: ({ defenderId, day, startMin, message }) => {
+      challenge: ({ defenderId, day, startMin, message, kind }) => {
         const { players, personaId, challenges } = get();
         const me = players.find((player) => player.id === personaId);
         const defender = players.find((player) => player.id === defenderId);
         if (!me || !defender) throw new Error("Speler niet gevonden.");
-        if (!canChallengeUp(me.rank, defender.rank, CHALLENGE_RANGE)) {
-          throw new Error(`Je kunt alleen iemand tot ${CHALLENGE_RANGE} plaatsen boven je uitdagen.`);
+        const allowed = kind === "invite"
+          ? canInviteDown(me.rank, defender.rank, CHALLENGE_RANGE)
+          : canChallengeUp(me.rank, defender.rank, CHALLENGE_RANGE);
+        if (!allowed) {
+          throw new Error(
+            kind === "invite"
+              ? `Je kunt iemand tot ${CHALLENGE_RANGE} plaatsen onder je uitnodigen.`
+              : `Je kunt alleen iemand tot ${CHALLENGE_RANGE} plaatsen boven je uitdagen.`,
+          );
         }
         const pending = challenges.some(
           (item) =>
@@ -65,6 +73,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               challengerId: me.id,
               defenderId: defender.id,
               status: "open",
+              kind,
               proposedDay: day,
               proposedStartMin: startMin,
               message: message.slice(0, 140),
@@ -124,6 +133,8 @@ export const useDemoStore = create<DemoState & DemoActions>()(
       },
       nudge: (playerId, direction) => set({ players: nudgePlayer(get().players, playerId, direction) }),
       remove: (playerId) => {
+        const persona = get().players.find((player) => player.id === get().personaId);
+        if (!isPyramidAdmin(persona)) throw new Error("Alleen Bart van der Poel haalt iemand van de ladder.");
         const players = removePlayer(get().players, playerId);
         const personaId = players.some((player) => player.id === get().personaId)
           ? get().personaId

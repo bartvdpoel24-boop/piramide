@@ -54,7 +54,7 @@ function LobbyBody() {
 
       <ul className="mb-8 grid gap-3 sm:grid-cols-3">
         {[
-          ["Uitdagen", "Tot vier plaatsen omhoog. De ander accepteert, of je spreekt het zelf af."],
+          ["Uitdagen", "Tot vier plaatsen omhoog. Onder je, tot vier plaatsen, nodig je uit."],
           ["Wisselen", "De winnaar pakt de hogere plek. Verder schuift er niets."],
           ["Stippen", "Elke geslaagde verdediging van plek 1 is een stip."],
         ].map(([title, body]) => (

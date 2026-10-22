@@ -10,6 +10,20 @@ export function canChallengeUp(fromRank: number, targetRank: number, range = CHA
   return targetRank < fromRank && fromRank - targetRank <= range;
 }
 
+/** An invitation goes downward, within the same range, so the match still counts. */
+export function canInviteDown(fromRank: number, targetRank: number, range = CHALLENGE_RANGE) {
+  return targetRank > fromRank && targetRank - fromRank <= range;
+}
+
+const ADMIN_NAME = "bart van der poel";
+
+/** The office admin is Bart van der Poel. The demo card keeps that role after a rename. */
+export function isPyramidAdmin(player: { id: string; name: string } | null | undefined) {
+  if (!player) return false;
+  if (player.id === "p-bart") return true;
+  return player.name.replace(/\s+/g, " ").trim().toLowerCase() === ADMIN_NAME;
+}
+
 export function settleMatch(
   players: Player[],
   leftId: string,

@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, cleanName, normalizeSlots, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, normalizeSlots, settleMatch } from "./rules";
 import { noteForIndex, WALL } from "./roster";
 import {
   CHALLENGE_RANGE,
@@ -108,12 +108,13 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
     challenger_id: string;
     defender_id: string;
     status: Challenge["status"];
+    kind: string | null;
     proposed_day: number | null;
     proposed_start_min: number | null;
     message: string;
     created_at: unknown;
   }>`
-    select id, challenger_id, defender_id, status, proposed_day, proposed_start_min, message, created_at
+    select id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, message, created_at
     from ladder_challenges
     where ladder_id = ${ladderId}
     order by created_at desc
@@ -155,6 +156,7 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
       challengerId: row.challenger_id,
       defenderId: row.defender_id,
       status: row.status,
+      kind: row.kind === "invite" ? "invite" : "challenge",
       proposedDay: row.proposed_day == null ? null : Number(row.proposed_day),
       proposedStartMin: row.proposed_start_min == null ? null : Number(row.proposed_start_min),
       message: row.message,
@@ -405,17 +407,20 @@ export const createChallenge = createServerFn({ method: "POST" })
       day: number | null;
       startMin: number | null;
       message: string;
+      kind?: string;
     }) => {
       if (!input?.ladderId || !input.defenderId) throw new Error("Kies wie je uitdaagt.");
       const day = input.day == null ? null : Number(input.day);
       const startMin = input.startMin == null ? null : Number(input.startMin);
       if ((day == null) !== (startMin == null)) throw new Error("Dag en tijd horen bij elkaar.");
+      const kind = input.kind === "invite" ? "invite" : "challenge";
       return {
         ladderId: String(input.ladderId),
         defenderId: String(input.defenderId),
         day,
         startMin,
         message: String(input.message ?? "").slice(0, 140),
+        kind,
       };
     },
   )
@@ -427,8 +432,15 @@ export const createChallenge = createServerFn({ method: "POST" })
     const me = players.find((player) => player.id === access.meId);
     const defender = players.find((player) => player.id === data.defenderId);
     if (!me || !defender) throw new Error("Speler niet gevonden.");
-    if (!canChallengeUp(me.rank, defender.rank, access.range)) {
-      throw new Error(`Je kunt alleen iemand tot ${access.range} plaatsen boven je uitdagen.`);
+    const allowed = data.kind === "invite"
+      ? canInviteDown(me.rank, defender.rank, access.range)
+      : canChallengeUp(me.rank, defender.rank, access.range);
+    if (!allowed) {
+      throw new Error(
+        data.kind === "invite"
+          ? `Je kunt iemand tot ${access.range} plaatsen onder je uitnodigen.`
+          : `Je kunt alleen iemand tot ${access.range} plaatsen boven je uitdagen.`,
+      );
     }
     const pending = await sql<{ id: string }>`
       select id from ladder_challenges
@@ -442,9 +454,9 @@ export const createChallenge = createServerFn({ method: "POST" })
     if (pending[0]) throw new Error("Er staat al een open uitdaging tussen jullie.");
     await sql`
       insert into ladder_challenges (
-        id, ladder_id, challenger_id, defender_id, status, proposed_day, proposed_start_min, message, created_by
+        id, ladder_id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, message, created_by
       ) values (
-        ${crypto.randomUUID()}, ${data.ladderId}, ${me.id}, ${defender.id}, 'open',
+        ${crypto.randomUUID()}, ${data.ladderId}, ${me.id}, ${defender.id}, 'open', ${data.kind},
         ${data.day}, ${data.startMin}, ${data.message}, ${context.userId}
       )
     `;
@@ -604,9 +616,10 @@ export const removeLadderPlayer = createServerFn({ method: "POST" })
   })
   .handler(async ({ context, data }) => {
     const sql = await db();
-    const access = await requireLadder(sql, context.userId, data.ladderId);
-    if (!access.amOwner) throw new Error("Alleen de beheerder haalt iemand van de ladder.");
+    await requireLadder(sql, context.userId, data.ladderId);
     const players = await loadPlayers(sql, data.ladderId);
+    const actor = players.find((player) => player.userId === context.userId);
+    if (!isPyramidAdmin(actor)) throw new Error("Alleen Bart van der Poel haalt iemand van de ladder.");
     if (players.length <= 1) throw new Error("De laatste speler blijft op de ladder.");
     const me = players.find((player) => player.id === data.playerId);
     if (!me) throw new Error("Speler niet gevonden.");

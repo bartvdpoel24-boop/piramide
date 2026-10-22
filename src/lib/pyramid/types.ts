@@ -36,6 +36,7 @@ export type Challenge = {
   challengerId: string;
   defenderId: string;
   status: ChallengeStatus;
+  kind: "challenge" | "invite";
   proposedDay: number | null;
   proposedStartMin: number | null;
   message: string;
