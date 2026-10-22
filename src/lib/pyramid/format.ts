@@ -50,6 +50,9 @@ export function challengeWhen(challenge: Pick<Challenge, "proposedDay" | "propos
 
 export function matchSummary(match: Match) {
   const score = `${match.winnerScore}–${match.loserScore}`;
+  if (match.winnerScore === match.loserScore) {
+    return `${match.winnerName} en ${match.loserName} speelden gelijk (${score}). De briefjes blijven hangen.`;
+  }
   if (match.swapped) {
     return `${match.winnerName} won van ${match.loserName} (${score}) en pakte plek ${match.loserRankBefore}.`;
   }

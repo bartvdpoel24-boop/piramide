@@ -45,7 +45,7 @@ export type LadderActions = {
     rightScore: number;
     note: string;
     challengeId: string | null;
-  }) => Promise<{ swapped: boolean; stipAwarded: boolean; winnerName: string }>;
+  }) => Promise<{ swapped: boolean; stipAwarded: boolean; draw: boolean; winnerName: string }>;
   onAvailability: (slots: Slot[]) => Promise<void>;
   onNudge?: (playerId: string, direction: -1 | 1) => Promise<void>;
   onRemove?: (playerId: string) => Promise<void>;
@@ -83,7 +83,8 @@ function errorText(error: unknown) {
   return "Er ging iets mis. Probeer het nog eens.";
 }
 
-function resultToast(result: { swapped: boolean; stipAwarded: boolean; winnerName: string }) {
+function resultToast(result: { swapped: boolean; stipAwarded: boolean; draw: boolean; winnerName: string }) {
+  if (result.draw) return "Gelijkspel. De briefjes blijven hangen.";
   if (result.stipAwarded) return `${result.winnerName} houdt de troon. +1 stip.`;
   if (result.swapped) return `${result.winnerName} schuift omhoog. Briefjes gewisseld.`;
   return `${result.winnerName} wint. De piramide blijft staan.`;
@@ -857,7 +858,7 @@ function ResultDialog({
         <Dialog.Content className="sheet">
           <Dialog.Title className="font-display text-3xl italic">Uitslag</Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-ink/70">
-            Eén partij is vaak 1–0. De hogere score wint.
+            Eén partij is vaak 1–0. Gelijke score is gelijkspel: de briefjes blijven hangen.
           </Dialog.Description>
           {left && draft && !draft.lockPair ? (
             <label className="mt-4 flex flex-col gap-1 text-sm">
@@ -881,11 +882,13 @@ function ResultDialog({
           </div>
           <p className="mt-3 text-sm text-ink/80">
             {preview
-              ? preview.stipAwarded
-                ? `${preview.winnerName} verdedigt de troon. +1 stip.`
-                : preview.swapped
-                  ? `${preview.winnerName} en ${preview.loserName} wisselen van plaats.`
-                  : `${preview.winnerName} wint. De piramide blijft staan.`
+              ? preview.draw
+                ? "Gelijkspel. De briefjes blijven hangen."
+                : preview.stipAwarded
+                  ? `${preview.winnerName} verdedigt de troon. +1 stip.`
+                  : preview.swapped
+                    ? `${preview.winnerName} en ${preview.loserName} wisselen van plaats.`
+                    : `${preview.winnerName} wint. De piramide blijft staan.`
               : "Deze twee staan te ver uit elkaar voor een geldige partij."}
           </p>
           <label className="mt-3 flex flex-col gap-1 text-sm">

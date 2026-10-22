@@ -587,6 +587,7 @@ export const recordResult = createServerFn({ method: "POST" })
     return {
       swapped: settled.swapped,
       stipAwarded: settled.stipAwarded,
+      draw: settled.draw,
       winnerName: settled.winnerName,
     };
   });

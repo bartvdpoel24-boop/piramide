@@ -24,7 +24,6 @@ export function settleMatch(
   if (leftScore < 0 || rightScore < 0 || leftScore > 15 || rightScore > 15) {
     throw new Error("De score ligt tussen 0 en 15.");
   }
-  if (leftScore === rightScore) throw new Error("Er moet een winnaar zijn.");
   if (leftId === rightId) throw new Error("Kies twee verschillende spelers.");
 
   const left = players.find((player) => player.id === leftId);
@@ -32,6 +31,23 @@ export function settleMatch(
   if (!left || !right) throw new Error("Speler niet gevonden.");
   if (!legalDistance(left.rank, right.rank, range)) {
     throw new Error(`Alleen een partij binnen ${range} plaatsen telt voor de piramide.`);
+  }
+
+  if (leftScore === rightScore) {
+    return {
+      winnerId: left.id,
+      loserId: right.id,
+      winnerName: left.name,
+      loserName: right.name,
+      winnerScore: leftScore,
+      loserScore: rightScore,
+      winnerRankBefore: left.rank,
+      loserRankBefore: right.rank,
+      swapped: false,
+      stipAwarded: false,
+      draw: true,
+      players: [...players].sort((a, b) => a.rank - b.rank),
+    };
   }
 
   const leftWins = leftScore > rightScore;
@@ -60,6 +76,7 @@ export function settleMatch(
     loserRankBefore: loser.rank,
     swapped,
     stipAwarded,
+    draw: false,
     players: next,
   };
 }

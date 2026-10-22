@@ -101,5 +101,6 @@ export type SettleResult = {
   loserRankBefore: number;
   swapped: boolean;
   stipAwarded: boolean;
+  draw: boolean;
   players: Player[];
 };

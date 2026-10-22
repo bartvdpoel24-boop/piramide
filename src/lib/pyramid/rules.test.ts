@@ -42,8 +42,14 @@ describe("piramide rules", () => {
     assert.equal(result.players.find((item) => item.id === "a")?.rank, 1);
   });
 
-  it("rejects a draw and a match outside the range", () => {
-    assert.throws(() => settleMatch(four, "a", "b", 1, 1), /winnaar/);
+  it("keeps every card on a draw and rejects a match outside the range", () => {
+    const result = settleMatch(four, "a", "b", 1, 1);
+    assert.equal(result.draw, true);
+    assert.equal(result.swapped, false);
+    assert.equal(result.stipAwarded, false);
+    assert.equal(result.players.find((item) => item.id === "a")?.rank, 1);
+    assert.equal(result.players.find((item) => item.id === "a")?.stippen, 0);
+    assert.equal(result.players.find((item) => item.id === "b")?.rank, 2);
     assert.throws(() => settleMatch(four, "a", "d", 1, 0), /4 plaatsen/);
   });
 
