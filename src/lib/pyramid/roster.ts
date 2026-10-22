@@ -30,6 +30,14 @@ export const WALL: { id: string; name: string; note: NoteColor }[] = [
   { id: "p-paul", name: "Paul", note: "ice" },
 ];
 
+const DEMO_JOINED = new Set(["p-tim", "p-bart", "p-louis", "p-nynke", "p-sophie", "p-geert"]);
+
+export function withDemoSignups(players: Player[]): Player[] {
+  return players.map((player) =>
+    DEMO_JOINED.has(player.id) && !player.userId ? { ...player, userId: `demo:${player.id}` } : player,
+  );
+}
+
 function slot(day: number, startHour: number, endHour: number, endMin = 0): Slot {
   return { day, startMin: startHour * 60, endMin: endHour * 60 + endMin };
 }
@@ -49,7 +57,7 @@ export function wallPlayers(): Player[] {
     rank: index + 1,
     stippen: person.id === "p-tim" ? 1 : 0,
     note: person.note,
-    userId: null,
+    userId: DEMO_JOINED.has(person.id) ? `demo:${person.id}` : null,
     availability: availability.get(person.id) ?? [],
   }));
 }

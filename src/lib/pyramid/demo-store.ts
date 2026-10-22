@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { canChallengeUp, cleanName, nudgePlayer, removePlayer, settleMatch } from "./rules";
-import { freshDemo, noteForIndex, type DemoState } from "./roster";
+import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
 import { CHALLENGE_RANGE, type SettleResult, type Slot } from "./types";
 
 type DemoActions = {
@@ -159,6 +159,11 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         });
       },
     }),
-    { name: "piramide-demo-v1", version: 1 },
+    { name: "piramide-demo-v1", version: 2, migrate: (persisted) => {
+      if (!persisted || typeof persisted !== "object") return freshDemo();
+      const state = persisted as DemoState;
+      if (!Array.isArray(state.players)) return freshDemo();
+      return { ...state, players: withDemoSignups(state.players) };
+    } },
   ),
 );

@@ -98,7 +98,10 @@ export function LadderScreen(props: Props) {
   const [tab, setTab] = useState<Tab>("uitdagingen");
   const [challengeFor, setChallengeFor] = useState<string | null>(null);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
-  const rows = useMemo(() => pyramidRows(players), [players]);
+  const [onlyJoined, setOnlyJoined] = useState(false);
+  const joined = useMemo(() => players.filter((player) => player.userId), [players]);
+  const visible = onlyJoined ? joined : players;
+  const rows = useMemo(() => pyramidRows(visible), [visible]);
   const selected = players.find((player) => player.id === selectedId) ?? null;
   const active = challenges.filter((item) => item.status === "open" || item.status === "accepted");
   const today = todayDayIndex();
@@ -187,8 +190,32 @@ export function LadderScreen(props: Props) {
         </p>
       </section>
 
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-ivory-dim">
+          {joined.length} van {players.length} aangemeld met de code. Dat blijft staan, ook als iemand nu niet
+          ingelogd is.
+        </p>
+        <button
+          type="button"
+          aria-pressed={onlyJoined}
+          className={cn("btn h-10 min-h-0 shrink-0 text-sm", onlyJoined ? "btn-brass" : "btn-ghost")}
+          onClick={() => {
+            const next = !onlyJoined;
+            setOnlyJoined(next);
+            if (next && selected && !selected.userId) {
+              setSelectedId(joined[0]?.id ?? null);
+            }
+          }}
+        >
+          Alleen aangemeld
+        </button>
+      </div>
+
       <div className="mb-5 overflow-x-auto pb-2">
         <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3 px-2 py-2">
+          {visible.length === 0 ? (
+            <p className="panel px-4 py-6 text-sm text-ivory-dim">Nog niemand heeft de code gebruikt.</p>
+          ) : null}
           {rows.map((row, rowIndex) => (
             <div key={rowIndex} className="flex justify-center gap-2">
               {row.map((player) => {
@@ -217,6 +244,11 @@ export function LadderScreen(props: Props) {
                         {player.stippen > 4 ? (
                           <span className="text-xs tabular-nums">{player.stippen}</span>
                         ) : null}
+                      </span>
+                    ) : null}
+                    {player.userId ? (
+                      <span className="mt-1 text-[10px] font-semibold tracking-wide text-brass-deep uppercase">
+                        code
                       </span>
                     ) : null}
                     {player.id === meId ? (
@@ -308,7 +340,7 @@ export function LadderScreen(props: Props) {
 
       {tab === "spelers" ? (
         <PlayersTab
-          players={players}
+          players={visible}
           onSelect={setSelectedId}
           amOwner={props.amOwner}
           onAdd={props.onAdd ? (name) => void run(() => props.onAdd?.(name), "Naam onderaan gezet.") : undefined}
@@ -720,7 +752,11 @@ function PlayersTab({
             >
               <span className="w-8 tabular-nums text-brass">{player.rank}</span>
               <span className="font-display flex-1 text-lg italic">{player.name}</span>
-              <span className="text-sm text-ivory-dim">{player.stippen > 0 ? `${player.stippen} stip` : ""}</span>
+              <span className="text-right text-sm text-ivory-dim">
+                {player.userId ? "aangemeld" : ""}
+                {player.userId && player.stippen > 0 ? " · " : ""}
+                {player.stippen > 0 ? `${player.stippen} stip` : ""}
+              </span>
             </button>
           </li>
         ))}
