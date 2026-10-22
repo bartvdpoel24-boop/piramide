@@ -117,7 +117,7 @@ export function LadderScreen(props: Props) {
   }
 
   return (
-    <Shell>
+    <Shell place={props.mode === "demo" ? `Demo · ${props.name}` : props.name}>
       <header className="mb-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <Link to="/" className="inline-flex items-center gap-2 text-ivory-dim">
