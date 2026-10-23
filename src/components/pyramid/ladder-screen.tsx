@@ -35,7 +35,7 @@ export type LadderActions = {
     startMin: number | null;
     message: string;
     kind: "challenge" | "invite";
-  }) => Promise<void>;
+  }) => Promise<{ mailed?: boolean; notify?: boolean } | void>;
   onRespond: (id: string, action: "accept" | "decline" | "cancel") => Promise<void>;
   onResult: (input: {
     leftId: string;
@@ -357,10 +357,20 @@ export function LadderScreen(props: Props) {
         onClose={() => setApproach(null)}
         onSubmit={(input) =>
           void run(async () => {
-            await props.onChallenge(input);
+            const result = await props.onChallenge(input);
             setApproach(null);
             setTab("uitdagingen");
-            toast.success(input.kind === "invite" ? "Uitnodiging verstuurd." : "Uitdaging verstuurd.");
+            const mailed = Boolean(result && result.mailed);
+            const notify = Boolean(result && result.notify);
+            toast.success(
+              input.kind === "invite"
+                ? "Uitnodiging verstuurd."
+                : mailed
+                  ? "Uitdaging verstuurd. De mail is onderweg."
+                  : notify
+                    ? "Uitdaging verstuurd. De mail kon niet worden bezorgd."
+                    : "Uitdaging verstuurd.",
+            );
           })
         }
       />

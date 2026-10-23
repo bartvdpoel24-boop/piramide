@@ -26,6 +26,7 @@ export type Player = {
   stippen: number;
   note: NoteColor;
   userId: string | null;
+  email?: string;
   availability: Slot[];
 };
 

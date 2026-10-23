@@ -88,8 +88,9 @@ function LiveLadder() {
       challenges={data.challenges}
       matches={data.matches}
       onChallenge={async (input) => {
-        await createChallenge({ data: { ladderId: id, ...input } });
+        const result = await createChallenge({ data: { ladderId: id, ...input } });
         await load();
+        return result;
       }}
       onRespond={async (challengeId, action) => {
         await respondChallenge({ data: { ladderId: id, challengeId, action } });

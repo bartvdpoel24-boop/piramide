@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { authEnabled, GROK_PROVIDERS, signIn, signOut } from "@/lib/auth/client";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { getLadder, listMyLadders, renameMe, setAvailability } from "@/lib/pyramid/api";
+import { getLadder, listMyLadders, renameMe, setAvailability, setNotifyEmail } from "@/lib/pyramid/api";
 import { pyramidStats } from "@/lib/pyramid/stats";
 import { StatsPanel } from "./stats-panel";
 import { feedbackStatus, saveFeedbackToken } from "@/lib/pyramid/feedback";
@@ -270,6 +270,7 @@ function DemoSettings() {
     <PlayerSettings
       player={me}
       onRename={(name) => useDemoStore.getState().rename(name)}
+      onEmail={(email) => useDemoStore.getState().setEmail(email)}
       onAvailability={(slots) => useDemoStore.getState().setAvailability(slots)}
     />
   );
@@ -341,12 +342,16 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
       ) : null}
       {player ? (
         <PlayerSettings
-          key={`${player.id}:${player.name}:${player.availability.map((slot) => `${slot.day}-${slot.startMin}`).join(",")}`}
+          key={`${player.id}:${player.name}:${player.email ?? ""}:${player.availability.map((slot) => `${slot.day}-${slot.startMin}`).join(",")}`}
           player={player}
           onRename={async (name) => {
             await renameMe({ data: { ladderId: activeId, name } });
             setPlayer({ ...player, name });
             window.dispatchEvent(new Event("piramide-refresh"));
+          }}
+          onEmail={async (email) => {
+            await setNotifyEmail({ data: { ladderId: activeId, email } });
+            setPlayer({ ...player, email });
           }}
           onAvailability={async (slots) => {
             await setAvailability({ data: { ladderId: activeId, slots } });
@@ -368,14 +373,18 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
 function PlayerSettings({
   player,
   onRename,
+  onEmail,
   onAvailability,
 }: {
   player: Player;
   onRename: (name: string) => void | Promise<void>;
+  onEmail: (email: string) => void | Promise<void>;
   onAvailability: (slots: Slot[]) => void | Promise<void>;
 }) {
   const [name, setName] = useState(player.name);
+  const [email, setEmail] = useState(player.email ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [mailError, setMailError] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col gap-6">
@@ -396,6 +405,36 @@ function PlayerSettings({
         </label>
         {error ? <p className="text-sm text-brass">{error}</p> : null}
         <button type="submit" className="btn btn-brass self-start" disabled={name.trim() === player.name}>
+          Bewaren
+        </button>
+      </form>
+      <form
+        className="flex flex-col gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setMailError(null);
+          Promise.resolve(onEmail(email))
+            .then(() => toast.success(email.trim() ? "E-mailadres bewaard." : "E-mailadres verwijderd."))
+            .catch((reason: unknown) => setMailError(errorText(reason)));
+        }}
+      >
+        <h2 className="font-display text-2xl italic">E-mailadres</h2>
+        <p className="text-sm text-ivory-dim">Als iemand je uitdaagt, krijg je daar een mail.</p>
+        <label className="flex flex-col gap-1 text-sm">
+          Jouw e-mail
+          <input
+            className="field"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            value={email}
+            maxLength={120}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="naam@voorbeeld.nl"
+          />
+        </label>
+        {mailError ? <p className="text-sm text-brass">{mailError}</p> : null}
+        <button type="submit" className="btn btn-brass self-start" disabled={email.trim() === (player.email ?? "")}>
           Bewaren
         </button>
       </form>

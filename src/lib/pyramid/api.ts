@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, normalizeSlots, settleMatch } from "./rules";
+import { challengeMail, cleanEmail } from "./email";
+import { challengeWhen } from "./format";
 import { noteForIndex, WALL } from "./roster";
 import {
   CHALLENGE_RANGE,
@@ -46,11 +48,12 @@ type PlayerRow = {
   rank: number;
   stippen: number;
   note_color: string;
+  notify_email: string | null;
 };
 
 async function loadPlayers(sql: Sql, ladderId: string): Promise<Player[]> {
   const rows = await sql<PlayerRow>`
-    select id, user_id, display_name, rank, stippen, note_color
+    select id, user_id, display_name, rank, stippen, note_color, notify_email
     from ladder_players
     where ladder_id = ${ladderId}
     order by rank
@@ -75,6 +78,7 @@ async function loadPlayers(sql: Sql, ladderId: string): Promise<Player[]> {
     stippen: Number(row.stippen),
     note: asNote(row.note_color),
     userId: row.user_id,
+    email: row.notify_email ?? "",
     availability: byPlayer.get(row.id) ?? [],
   }));
 }
@@ -152,7 +156,7 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
     challengeRange: access.range,
     amOwner: access.amOwner,
     meId: access.meId,
-    players,
+    players: players.map((player) => (player.id === access.meId ? player : { ...player, email: "" })),
     challenges: challenges.map((row) => ({
       id: row.id,
       challengerId: row.challenger_id,
@@ -500,6 +504,41 @@ export const setAvailability = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const setNotifyEmail = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; email?: string }) => {
+    if (!input?.ladderId) throw new Error("Ladder ontbreekt.");
+    return { ladderId: String(input.ladderId), email: cleanEmail(String(input.email ?? "")) };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    const access = await requireLadder(sql, context.userId, data.ladderId);
+    if (!access.meId) throw new Error("Koppel eerst je naam aan de ladder.");
+    await sql`update ladder_players set notify_email = ${data.email} where id = ${access.meId}`;
+    return { ok: true };
+  });
+
+export const sendChallengeNotice = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    (input: { to?: string; challenger?: string; ladder?: string; when?: string; message?: string }) => {
+      const to = cleanEmail(String(input?.to ?? ""));
+      if (!to) throw new Error("Er is geen e-mailadres.");
+      return {
+        to,
+        challenger: String(input?.challenger ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || "Iemand",
+        ladder: String(input?.ladder ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || "Piramide",
+        when: String(input?.when ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
+        message: String(input?.message ?? "").trim().slice(0, 140),
+      };
+    },
+  )
+  .handler(async ({ data }) => {
+    const { deliverChallengeMail } = await import("./email.server");
+    const mailed = await deliverChallengeMail(challengeMail(data));
+    return { mailed, notify: true };
+  });
+
 export const createChallenge = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(
@@ -562,7 +601,19 @@ export const createChallenge = createServerFn({ method: "POST" })
         ${data.day}, ${data.startMin}, ${data.message}, ${context.userId}
       )
     `;
-    return { ok: true };
+    let mailed = false;
+    if (data.kind === "challenge" && defender.email) {
+      const mail = challengeMail({
+        to: defender.email,
+        challenger: me.name,
+        ladder: access.ladder.name,
+        when: challengeWhen({ proposedDay: data.day, proposedStartMin: data.startMin }),
+        message: data.message,
+      });
+      const { deliverChallengeMail } = await import("./email.server");
+      mailed = await deliverChallengeMail(mail);
+    }
+    return { ok: true, mailed, notify: Boolean(defender.email) };
   });
 
 export const respondChallenge = createServerFn({ method: "POST" })

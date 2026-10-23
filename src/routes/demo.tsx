@@ -3,6 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LadderScreen } from "@/components/pyramid/ladder-screen";
 import { Shell } from "@/components/pyramid/shell";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
+import { sendChallengeNotice } from "@/lib/pyramid/api";
+import { challengeWhen } from "@/lib/pyramid/format";
 import { CHALLENGE_RANGE } from "@/lib/pyramid/types";
 
 export const Route = createFileRoute("/demo")({ component: DemoPage });
@@ -38,7 +40,27 @@ function DemoPage() {
       matches={state.matches}
       onPersona={state.setPersona}
       onReset={state.reset}
-      onChallenge={async (input) => state.challenge(input)}
+      onChallenge={async (input) => {
+        state.challenge(input);
+        if (input.kind !== "challenge") return { mailed: false };
+        const players = useDemoStore.getState().players;
+        const me = players.find((player) => player.id === useDemoStore.getState().personaId);
+        const defender = players.find((player) => player.id === input.defenderId);
+        if (!defender?.email || !me) return { mailed: false };
+        try {
+          return await sendChallengeNotice({
+            data: {
+              to: defender.email,
+              challenger: me.name,
+              ladder: "Kantoorpiramide",
+              when: challengeWhen({ proposedDay: input.day, proposedStartMin: input.startMin }),
+              message: input.message,
+            },
+          });
+        } catch {
+          return { mailed: false, notify: true };
+        }
+      }}
       onRespond={async (id, action) => state.respond(id, action)}
       onResult={async (input) => state.record(input)}
       onAvailability={async (slots) => state.setAvailability(slots)}

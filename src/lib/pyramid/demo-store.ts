@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, removePlayer, settleMatch } from "./rules";
+import { cleanEmail } from "./email";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
 import { CHALLENGE_RANGE, type SettleResult, type Slot } from "./types";
 
@@ -28,6 +29,7 @@ type DemoActions = {
   remove: (playerId: string) => void;
   add: (name: string) => void;
   rename: (name: string) => void;
+  setEmail: (email: string) => void;
 };
 
 export const useDemoStore = create<DemoState & DemoActions>()(
@@ -165,6 +167,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               stippen: 0,
               note: noteForIndex(players.length),
               userId: null,
+              email: "",
               availability: [],
             },
           ],
@@ -181,12 +184,23 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           players: players.map((player) => (player.id === personaId ? { ...player, name: clean } : player)),
         });
       },
+      setEmail: (email) => {
+        const clean = cleanEmail(email);
+        const { players, personaId } = get();
+        if (!players.some((player) => player.id === personaId)) throw new Error("Speler niet gevonden.");
+        set({
+          players: players.map((player) => (player.id === personaId ? { ...player, email: clean } : player)),
+        });
+      },
     }),
-    { name: "piramide-demo-v1", version: 2, migrate: (persisted) => {
+    { name: "piramide-demo-v1", version: 3, migrate: (persisted) => {
       if (!persisted || typeof persisted !== "object") return freshDemo();
       const state = persisted as DemoState;
       if (!Array.isArray(state.players)) return freshDemo();
-      return { ...state, players: withDemoSignups(state.players) };
+      return {
+        ...state,
+        players: withDemoSignups(state.players).map((player) => ({ ...player, email: player.email ?? "" })),
+      };
     } },
   ),
 );

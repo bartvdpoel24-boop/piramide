@@ -58,6 +58,7 @@ export function wallPlayers(): Player[] {
     stippen: person.id === "p-tim" ? 1 : 0,
     note: person.note,
     userId: DEMO_JOINED.has(person.id) ? `demo:${person.id}` : null,
+    email: "",
     availability: availability.get(person.id) ?? [],
   }));
 }
