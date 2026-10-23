@@ -45,7 +45,6 @@ function DemoPage() {
       onNudge={async (playerId, direction) => state.nudge(playerId, direction)}
       onRemove={async (playerId) => state.remove(playerId)}
       onAdd={async (name) => state.add(name)}
-      onRename={async (name) => state.rename(name)}
     />
   );
 }

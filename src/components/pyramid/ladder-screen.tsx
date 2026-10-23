@@ -3,25 +3,23 @@ import { Link } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronDown, ChevronUp, Copy, Crown, Minus, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { UserButton } from "@/lib/auth/gates";
 import {
   challengeWhen,
   DAYS_LONG,
-  DAYS_SHORT,
   fmtMin,
   fmtSlot,
   fmtWhen,
   matchSummary,
-  TIME_OPTIONS,
   todayDayIndex,
 } from "@/lib/pyramid/format";
-import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, overlapSlots, pyramidRows, settleMatch } from "@/lib/pyramid/rules";
+import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, overlapSlots, pyramidRows, settleMatch } from "@/lib/pyramid/rules";
+import { lastResults } from "@/lib/pyramid/stats";
 import type { Challenge, Match, NoteColor, Player, Slot } from "@/lib/pyramid/types";
 import { cn } from "@/lib/cn";
 import { RackMark } from "./mark";
 import { Shell } from "./shell";
 
-type Tab = "uitdagingen" | "uitslagen" | "tijden" | "spelers";
+type Tab = "piramide" | "uitslagen" | "uitdagingen" | "tijden" | "deelnemers";
 
 type ResultDraft = {
   leftId: string;
@@ -51,7 +49,6 @@ export type LadderActions = {
   onNudge?: (playerId: string, direction: -1 | 1) => Promise<void>;
   onRemove?: (playerId: string) => Promise<void>;
   onAdd?: (name: string) => Promise<void>;
-  onRename?: (name: string) => Promise<void>;
   onPersona?: (playerId: string) => void;
   onReset?: () => void;
 };
@@ -97,13 +94,14 @@ export function LadderScreen(props: Props) {
   const me = players.find((player) => player.id === meId) ?? null;
   const king = players.find((player) => player.rank === 1) ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(me?.id ?? king?.id ?? null);
-  const [tab, setTab] = useState<Tab>("uitdagingen");
+  const [tab, setTab] = useState<Tab>("piramide");
   const [approach, setApproach] = useState<{ id: string; kind: "challenge" | "invite" } | null>(null);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
   const [onlyJoined, setOnlyJoined] = useState(false);
   const joined = useMemo(() => players.filter((player) => player.userId), [players]);
   const visible = onlyJoined ? joined : players;
   const rows = useMemo(() => pyramidRows(visible), [visible]);
+  const latest = useMemo(() => lastResults(matches), [matches]);
   const selected = players.find((player) => player.id === selectedId) ?? null;
   const active = challenges.filter((item) => item.status === "open" || item.status === "accepted");
   const today = todayDayIndex();
@@ -131,14 +129,11 @@ export function LadderScreen(props: Props) {
             <span className="text-xs font-semibold tracking-widest uppercase">Piramide</span>
           </Link>
           <h1 className="font-display mt-1 truncate text-4xl italic">{props.name}</h1>
-          <p className="text-sm text-ivory-dim">
-            {props.mode === "demo"
-              ? "Demo van de muur. Blijft op dit apparaat."
-              : `Uitdagen tot ${challengeRange} plaatsen erboven.`}
-          </p>
+          {props.mode === "demo" ? (
+            <p className="text-sm text-ivory-dim">Demo van de muur. Blijft op dit apparaat.</p>
+          ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
-          {props.mode === "live" ? <UserButton /> : null}
           {props.inviteCode ? (
             <button
               type="button"
@@ -174,153 +169,143 @@ export function LadderScreen(props: Props) {
         </label>
       ) : null}
 
-      <section className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold tracking-widest text-brass uppercase">De troon</p>
-          <p className="font-display text-2xl italic">
-            {king ? king.name : "Nog leeg"}
-            {king && king.stippen > 0 ? (
-              <span className="ml-2 text-base text-brass not-italic">
-                {king.stippen} stip{king.stippen === 1 ? "" : "pen"}
-              </span>
-            ) : null}
-          </p>
-        </div>
-        <p className="max-w-sm text-sm text-ivory-dim">
-          Daag maximaal {challengeRange} briefjes boven je uit. Onder je kun je uitnodigen, ook tot {challengeRange}{" "}
-          plaatsen. Win je van iemand boven je, dan wissel je. Houdt de nummer 1 stand, dan een stip erbij.
-        </p>
-      </section>
-
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-ivory-dim">
-          {joined.length} van {players.length} aangemeld met de code. Dat blijft staan, ook als iemand nu niet
-          ingelogd is.
-        </p>
-        <button
-          type="button"
-          aria-pressed={onlyJoined}
-          className={cn("btn h-10 min-h-0 shrink-0 text-sm", onlyJoined ? "btn-brass" : "btn-ghost")}
-          onClick={() => {
-            const next = !onlyJoined;
-            setOnlyJoined(next);
-            if (next && selected && !selected.userId) {
-              setSelectedId(joined[0]?.id ?? null);
-            }
-          }}
-        >
-          Alleen aangemeld
-        </button>
-      </div>
-
-      <div className="mb-5 overflow-x-auto pb-2">
-        <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3 px-2 py-2">
-          {visible.length === 0 ? (
-            <p className="panel px-4 py-6 text-sm text-ivory-dim">Nog niemand heeft de code gebruikt.</p>
-          ) : null}
-          {rows.map((row, rowIndex) => (
-            <div key={rowIndex} className="flex justify-center gap-2">
-              {row.map((player) => {
-                const tilt = [-1.3, 1.1, -0.5, 1.4, -1, 0.7][(player.rank + rowIndex) % 6] ?? 0;
-                const activeNote = player.id === selectedId;
-                return (
-                  <button
-                    key={player.id}
-                    type="button"
-                    onClick={() => setSelectedId(player.id)}
-                    aria-pressed={activeNote}
-                    className={cn(
-                      "note relative flex min-h-28 w-28 shrink-0 flex-col items-center justify-center px-2 py-2 text-center text-ink",
-                      activeNote && "z-10 ring-2 ring-brass ring-offset-2 ring-offset-felt",
-                    )}
-                    style={{ background: NOTE_BG[player.note], transform: `rotate(${activeNote ? 0 : tilt}deg)` }}
-                  >
-                    <span className="text-xs tabular-nums opacity-70">#{player.rank}</span>
-                    <span className="font-display line-clamp-3 text-base leading-tight italic">{player.name}</span>
-                    {player.rank === 1 ? <Crown className="mt-1 size-4 text-brass-deep" /> : null}
-                    {player.stippen > 0 ? (
-                      <span className="mt-1 flex items-center gap-1" title={`${player.stippen} stippen`}>
-                        {Array.from({ length: Math.min(player.stippen, 4) }, (_, index) => (
-                          <span key={index} className="size-1.5 rounded-full bg-brass-deep" />
-                        ))}
-                        {player.stippen > 4 ? (
-                          <span className="text-xs tabular-nums">{player.stippen}</span>
-                        ) : null}
-                      </span>
-                    ) : null}
-                    {player.userId ? (
-                      <span className="mt-1 text-[10px] font-semibold tracking-wide text-brass-deep uppercase">
-                        code
-                      </span>
-                    ) : null}
-                    {player.id === meId ? (
-                      <span className="mt-1 rounded-full bg-brass px-1.5 text-xs font-semibold tracking-wide text-ink uppercase">
-                        Jij
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
+      <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-felt px-2 py-2">
+        <div className="grid grid-cols-5 items-start gap-1" role="tablist" aria-label="Onderdelen">
+          {(
+            [
+              ["piramide", "Piramide"],
+              ["uitslagen", "Uitslagen"],
+              ["uitdagingen", "Uitdagingen"],
+              ["tijden", "Tijden"],
+              ["deelnemers", "Deelnemers"],
+            ] as const
+          ).map(([id, label]) => (
+            <div key={id} className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => setTab(id)}
+                className={cn("btn tab-tile", tab === id ? "btn-brass" : "btn-ghost")}
+              >
+                {label}
+              </button>
+              {id === "uitdagingen" && active.length > 0 ? (
+                <button
+                  type="button"
+                  className="text-xs text-ivory underline decoration-brass underline-offset-2"
+                  onClick={() => setTab("uitdagingen")}
+                >
+                  {active.length} open
+                </button>
+              ) : (
+                <span className="h-4" aria-hidden />
+              )}
             </div>
           ))}
         </div>
       </div>
 
-      {selected ? (
-        <PlayerPanel
-          player={selected}
-          me={me}
-          range={challengeRange}
-          amOwner={props.amOwner}
-          players={players}
-          onChallenge={() => setApproach({ id: selected.id, kind: "challenge" })}
-          onInvite={() => setApproach({ id: selected.id, kind: "invite" })}
-          onResult={(leftId, rightId, lockPair) => openResult(leftId, rightId, null, lockPair)}
-          onNudge={
-            props.onNudge
-              ? (direction) => void run(() => props.onNudge?.(selected.id, direction))
-              : undefined
-          }
-          onRemove={
-            props.onRemove && isPyramidAdmin(me)
-              ? () => void run(() => props.onRemove?.(selected.id), "Briefje van de muur.")
-              : undefined
-          }
-          onRename={
-            props.onRename && me && selected.id === me.id
-              ? (name) => void run(() => props.onRename?.(name), "Naam gewijzigd.")
-              : undefined
-          }
-        />
-      ) : (
-        <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
-      )}
+      {tab === "piramide" ? (
+        <>
+          <div className="mb-4 flex justify-end">
+            <button
+              type="button"
+              aria-pressed={onlyJoined}
+              className={cn("btn h-10 min-h-0 shrink-0 text-sm", onlyJoined ? "btn-brass" : "btn-ghost")}
+              onClick={() => {
+                const next = !onlyJoined;
+                setOnlyJoined(next);
+                if (next && selected && !selected.userId) {
+                  setSelectedId(joined[0]?.id ?? null);
+                }
+              }}
+            >
+              Alleen aangemeld
+            </button>
+          </div>
 
-      {freeToday.length > 0 ? (
-        <p className="mb-4 text-sm text-ivory-dim">
-          Vandaag vrij: {freeToday.map((player) => player.name).join(", ")}
-        </p>
+          <div className="mb-5 overflow-x-auto pb-2">
+            <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3 px-2 py-2">
+              {visible.length === 0 ? (
+                <p className="panel px-4 py-6 text-sm text-ivory-dim">Nog niemand heeft de code gebruikt.</p>
+              ) : null}
+              {rows.map((row, rowIndex) => (
+                <div key={rowIndex} className="flex justify-center gap-2">
+                  {row.map((player) => {
+                    const tilt = [-1.3, 1.1, -0.5, 1.4, -1, 0.7][(player.rank + rowIndex) % 6] ?? 0;
+                    const activeNote = player.id === selectedId;
+                    return (
+                      <button
+                        key={player.id}
+                        type="button"
+                        onClick={() => setSelectedId(player.id)}
+                        aria-pressed={activeNote}
+                        className={cn(
+                          "note relative flex min-h-28 w-28 shrink-0 flex-col items-center justify-center px-2 py-2 text-center text-ink",
+                          activeNote && "z-10 ring-2 ring-brass ring-offset-2 ring-offset-felt",
+                        )}
+                        style={{ background: NOTE_BG[player.note], transform: `rotate(${activeNote ? 0 : tilt}deg)` }}
+                      >
+                        <span className="text-xs tabular-nums opacity-70">#{player.rank}</span>
+                        <span className="font-display line-clamp-3 text-base leading-tight italic">{player.name}</span>
+                        {player.rank === 1 ? <Crown className="mt-1 size-4 text-brass-deep" /> : null}
+                        {player.stippen > 0 ? (
+                          <span className="mt-1 flex items-center gap-1" title={`${player.stippen} stippen`}>
+                            {Array.from({ length: Math.min(player.stippen, 4) }, (_, index) => (
+                              <span key={index} className="size-1.5 rounded-full bg-brass-deep" />
+                            ))}
+                            {player.stippen > 4 ? (
+                              <span className="text-xs tabular-nums">{player.stippen}</span>
+                            ) : null}
+                          </span>
+                        ) : null}
+                        {latest.get(player.id) ? (
+                          <span className="mt-1 text-[10px] leading-tight font-semibold text-ink/80">
+                            {latest.get(player.id)?.date}
+                            <br />
+                            {latest.get(player.id)?.line}
+                          </span>
+                        ) : null}
+                        {player.id === meId ? (
+                          <span className="mt-1 rounded-full bg-brass px-1.5 text-xs font-semibold tracking-wide text-ink uppercase">
+                            Jij
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {selected ? (
+            <PlayerPanel
+              player={selected}
+              me={me}
+              range={challengeRange}
+              amOwner={props.amOwner}
+              players={players}
+              onChallenge={() => setApproach({ id: selected.id, kind: "challenge" })}
+              onInvite={() => setApproach({ id: selected.id, kind: "invite" })}
+              onResult={(leftId, rightId, lockPair) => openResult(leftId, rightId, null, lockPair)}
+              onNudge={
+                props.onNudge
+                  ? (direction) => void run(() => props.onNudge?.(selected.id, direction))
+                  : undefined
+              }
+              onRemove={
+                props.onRemove && isPyramidAdmin(me)
+                  ? () => void run(() => props.onRemove?.(selected.id), "Briefje van de muur.")
+                  : undefined
+              }
+            />
+          ) : (
+            <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
+          )}
+        </>
       ) : null}
-
-      <div className="mb-4 flex gap-2 overflow-x-auto">
-        {(
-          [
-            ["uitdagingen", `Uitdagingen${active.length ? ` ${active.length}` : ""}`],
-            ["uitslagen", "Uitslagen"],
-            ["tijden", "Tijden"],
-            ["spelers", "Spelers"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn("btn h-10 min-h-0 shrink-0 px-4 text-sm", tab === id ? "btn-brass" : "btn-ghost")}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
 
       {tab === "uitdagingen" ? (
         <ChallengeList
@@ -341,17 +326,23 @@ export function LadderScreen(props: Props) {
       {tab === "uitslagen" ? <MatchList matches={matches} /> : null}
 
       {tab === "tijden" ? (
-        <TimesTab
-          players={players}
-          me={me}
-          onSave={(slots) => void run(() => props.onAvailability(slots), "Tijden bewaard.")}
-        />
+        <>
+          {freeToday.length > 0 ? (
+            <p className="mb-4 text-sm text-ivory-dim">
+              Vandaag vrij: {freeToday.map((player) => player.name).join(", ")}
+            </p>
+          ) : null}
+          <TimesTab players={players} />
+        </>
       ) : null}
 
-      {tab === "spelers" ? (
+      {tab === "deelnemers" ? (
         <PlayersTab
-          players={visible}
-          onSelect={setSelectedId}
+          players={players}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setTab("piramide");
+          }}
           amOwner={props.amOwner}
           onAdd={props.onAdd ? (name) => void run(() => props.onAdd?.(name), "Naam onderaan gezet.") : undefined}
           onReset={props.onReset ? () => void run(props.onReset!, "Demo teruggezet naar de muur.") : undefined}
@@ -393,33 +384,6 @@ export function LadderScreen(props: Props) {
   );
 }
 
-function RenameForm({ name, onRename }: { name: string; onRename: (name: string) => void }) {
-  const [value, setValue] = useState(name);
-  return (
-    <form
-      className="mt-3 flex flex-col gap-2 sm:flex-row"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onRename(value);
-      }}
-    >
-      <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-        Jouw naam
-        <input
-          className="field"
-          value={value}
-          maxLength={40}
-          aria-label="Jouw naam"
-          onChange={(event) => setValue(event.target.value)}
-        />
-      </label>
-      <button type="submit" className="btn btn-brass sm:self-end" disabled={value.trim() === name}>
-        Bewaren
-      </button>
-    </form>
-  );
-}
-
 function PlayerPanel({
   player,
   me,
@@ -431,7 +395,6 @@ function PlayerPanel({
   onResult,
   onNudge,
   onRemove,
-  onRename,
 }: {
   player: Player;
   me: Player | null;
@@ -443,7 +406,6 @@ function PlayerPanel({
   onResult: (leftId: string, rightId: string, lockPair: boolean) => void;
   onNudge?: (direction: -1 | 1) => void;
   onRemove?: () => void;
-  onRename?: (name: string) => void;
 }) {
   const upward = me ? canChallengeUp(me.rank, player.rank, range) : false;
   const downward = me ? canInviteDown(me.rank, player.rank, range) : false;
@@ -492,7 +454,6 @@ function PlayerPanel({
           ) : null}
         </div>
       </div>
-      {onRename ? <RenameForm key={player.name} name={player.name} onRename={onRename} /> : null}
       {player.availability.length > 0 ? (
         <p className="mt-3 text-sm text-ivory-dim">
           Vrij: {player.availability.map((slot) => fmtSlot(slot)).join(" · ")}
@@ -528,6 +489,7 @@ function ChallengeList({
   amOwner,
   onRespond,
   onResult,
+  empty = "Nog geen uitdagingen. Tik iemand boven je aan om uit te dagen, of iemand onder je om uit te nodigen.",
 }: {
   challenges: Challenge[];
   players: Player[];
@@ -535,13 +497,12 @@ function ChallengeList({
   amOwner: boolean;
   onRespond: (id: string, action: "accept" | "decline" | "cancel") => void;
   onResult: (challenge: Challenge) => void;
+  empty?: string;
 }) {
   const name = (id: string) => players.find((player) => player.id === id)?.name ?? "Onbekend";
   if (challenges.length === 0) {
     return (
-      <p className="panel p-4 text-sm text-ivory-dim">
-        Nog geen uitdagingen. Tik iemand boven je aan om uit te dagen, of iemand onder je om uit te nodigen.
-      </p>
+      <p className="panel p-4 text-sm text-ivory-dim">{empty}</p>
     );
   }
   return (
@@ -602,9 +563,9 @@ function labelStatus(status: Challenge["status"]) {
   return "ingetrokken";
 }
 
-function MatchList({ matches }: { matches: Match[] }) {
+function MatchList({ matches, empty = "Nog geen partijen. De eerste uitslag komt hier te staan." }: { matches: Match[]; empty?: string }) {
   if (matches.length === 0) {
-    return <p className="panel p-4 text-sm text-ivory-dim">Nog geen partijen. De eerste uitslag komt hier te staan.</p>;
+    return <p className="panel p-4 text-sm text-ivory-dim">{empty}</p>;
   }
   return (
     <ul className="flex flex-col gap-2">
@@ -623,18 +584,11 @@ function MatchList({ matches }: { matches: Match[] }) {
 
 function TimesTab({
   players,
-  me,
-  onSave,
 }: {
   players: Player[];
-  me: Player | null;
-  onSave: (slots: Slot[]) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {me ? <AvailabilityEditor player={me} onSave={onSave} /> : (
-        <p className="panel p-4 text-sm text-ivory-dim">Koppel je naam om je tijden door te geven.</p>
-      )}
       <div className="panel p-4">
         <h2 className="font-display mb-3 text-2xl italic">Wie kan wanneer</h2>
         <ul className="flex flex-col gap-3">
@@ -662,120 +616,6 @@ function TimesTab({
         </ul>
       </div>
     </div>
-  );
-}
-
-function AvailabilityEditor({ player, onSave }: { player: Player; onSave: (slots: Slot[]) => void }) {
-  const key = `${player.id}:${player.availability.map((slot) => `${slot.day}-${slot.startMin}-${slot.endMin}`).join("|")}`;
-  return <AvailabilityForm key={key} player={player} onSave={onSave} />;
-}
-
-function AvailabilityForm({ player, onSave }: { player: Player; onSave: (slots: Slot[]) => void }) {
-  const [slots, setSlots] = useState<Slot[]>(player.availability);
-
-  function daySlots(day: number) {
-    return slots
-      .map((slot, index) => ({ slot, index }))
-      .filter((item) => item.slot.day === day);
-  }
-
-  function toggle(day: number) {
-    setSlots((current) =>
-      current.some((slot) => slot.day === day)
-        ? current.filter((slot) => slot.day !== day)
-        : [...current, { day, startMin: 12 * 60, endMin: 13 * 60 }],
-    );
-  }
-
-  function add(day: number) {
-    setSlots((current) => {
-      const mine = current.filter((slot) => slot.day === day).sort((a, b) => a.startMin - b.startMin);
-      if (mine.length >= 4) return current;
-      const last = mine[mine.length - 1];
-      let startMin = last ? last.endMin : 12 * 60;
-      let endMin = startMin + 60;
-      if (endMin > 24 * 60) {
-        startMin = 18 * 60;
-        endMin = 19 * 60;
-      }
-      return [...current, { day, startMin, endMin }];
-    });
-  }
-
-  function update(index: number, patch: Partial<Slot>) {
-    setSlots((current) => current.map((slot, slotIndex) => (slotIndex === index ? { ...slot, ...patch } : slot)));
-  }
-
-  function remove(index: number) {
-    setSlots((current) => current.filter((_, slotIndex) => slotIndex !== index));
-  }
-
-  return (
-    <form
-      className="panel p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSave(normalizeSlots(slots));
-      }}
-    >
-      <h2 className="font-display text-2xl italic">Jouw tijden</h2>
-      <p className="mb-3 text-sm text-ivory-dim">Zet een dag aan. Je kunt meerdere tijden op dezelfde dag zetten.</p>
-      <ul className="flex flex-col gap-3">
-        {DAYS_SHORT.map((label, day) => {
-          const mine = daySlots(day);
-          return (
-            <li key={label} className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  aria-pressed={mine.length > 0}
-                  onClick={() => toggle(day)}
-                  className={cn("btn h-10 min-h-0 w-14 px-0 text-sm uppercase", mine.length ? "btn-brass" : "btn-ghost")}
-                >
-                  {label}
-                </button>
-                {mine.length === 0 ? <span className="text-sm text-ivory-dim">niet vrij</span> : null}
-              </div>
-              {mine.map(({ slot, index }) => (
-                <div key={`${day}-${index}`} className="flex flex-wrap items-center gap-2 pl-16">
-                  <TimeSelect value={slot.startMin} onChange={(startMin) => update(index, { startMin })} />
-                  <span className="text-ivory-dim">tot</span>
-                  <TimeSelect value={slot.endMin} onChange={(endMin) => update(index, { endMin })} />
-                  <button
-                    type="button"
-                    className="btn btn-quiet size-11 px-0"
-                    aria-label={`${label} tijd weghalen`}
-                    onClick={() => remove(index)}
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                </div>
-              ))}
-              {mine.length > 0 && mine.length < 4 ? (
-                <button type="button" className="btn btn-ghost ml-16 self-start" onClick={() => add(day)}>
-                  <Plus className="size-4" /> Nog een tijd
-                </button>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      <button type="submit" className="btn btn-brass mt-4">
-        Tijden bewaren
-      </button>
-    </form>
-  );
-}
-
-function TimeSelect({ value, onChange }: { value: number; onChange: (value: number) => void }) {
-  return (
-    <select className="field w-auto" value={value} onChange={(event) => onChange(Number(event.target.value))}>
-      {TIME_OPTIONS.map((minutes) => (
-        <option key={minutes} value={minutes}>
-          {fmtMin(minutes)}
-        </option>
-      ))}
-    </select>
   );
 }
 

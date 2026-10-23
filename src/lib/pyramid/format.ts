@@ -1,4 +1,4 @@
-import type { Challenge, Match, Slot } from "./types";
+import type { Challenge, Match, Slot } from "./types.ts";
 
 export const DAYS_SHORT = ["ma", "di", "wo", "do", "vr", "za", "zo"] as const;
 export const DAYS_LONG = [
@@ -20,6 +20,16 @@ export function fmtMin(mins: number) {
 export function fmtSlot(slot: Slot) {
   const day = DAYS_LONG[slot.day] ?? "dag";
   return `${day} ${fmtMin(slot.startMin)}–${fmtMin(slot.endMin)}`;
+}
+
+export function fmtDay(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("nl-NL", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Europe/Amsterdam",
+  }).format(date);
 }
 
 export function fmtWhen(iso: string) {

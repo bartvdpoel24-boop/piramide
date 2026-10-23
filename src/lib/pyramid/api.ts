@@ -6,6 +6,8 @@ import {
   CHALLENGE_RANGE,
   NOTE_COLORS,
   type Challenge,
+  type HomeChallenge,
+  type HomeMatch,
   type InvitePreview,
   type LadderSnapshot,
   type LadderSummary,
@@ -192,7 +194,7 @@ async function swapRanks(sql: Sql, ladderId: string, aId: string, aRank: number,
 
 export const listMyLadders = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
-  .handler(async ({ context }): Promise<LadderSummary[]> => {
+  .handler(async ({ context }): Promise<{ ladders: LadderSummary[]; canJoin: boolean }> => {
     const sql = await db();
     const rows = await sql<{
       id: string;
@@ -217,16 +219,116 @@ export const listMyLadders = createServerFn({ method: "GET" })
       where l.owner_id = ${context.userId} or me.id is not null
       order by l.created_at desc
     `;
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      inviteCode: row.invite_code,
-      myRank: row.my_rank == null ? null : Number(row.my_rank),
-      myName: row.my_name,
-      kingName: row.king_name,
-      playerCount: Number(row.player_count),
-      openChallenges: Number(row.open_challenges),
-    }));
+    const participating = rows.some((row) => row.my_rank != null);
+    const others = await sql<{ n: number }>`
+      select count(*)::int as n
+      from ladders l
+      where l.owner_id <> ${context.userId}
+        and not exists (
+          select 1 from ladder_players p
+          where p.ladder_id = l.id and p.user_id = ${context.userId}
+        )
+    `;
+    return {
+      ladders: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        inviteCode: row.invite_code,
+        myRank: row.my_rank == null ? null : Number(row.my_rank),
+        myName: row.my_name,
+        kingName: row.king_name,
+        playerCount: Number(row.player_count),
+        openChallenges: Number(row.open_challenges),
+      })),
+      canJoin: !participating || Number(others[0]?.n ?? 0) > 0,
+    };
+  });
+
+export const homeFeed = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }): Promise<{ challenges: HomeChallenge[]; matches: HomeMatch[] }> => {
+    const sql = await db();
+    const challenges = await sql<{
+      id: string;
+      ladder_id: string;
+      ladder_name: string;
+      challenger_name: string;
+      defender_name: string;
+      status: HomeChallenge["status"];
+      kind: string | null;
+      created_at: unknown;
+    }>`
+      select c.id, c.ladder_id, l.name as ladder_name,
+        ch.display_name as challenger_name, df.display_name as defender_name,
+        c.status, c.kind, c.created_at
+      from ladder_challenges c
+      join ladders l on l.id = c.ladder_id
+      join ladder_players ch on ch.id = c.challenger_id
+      join ladder_players df on df.id = c.defender_id
+      where c.status in ('open', 'accepted')
+        and (
+          l.owner_id = ${context.userId}
+          or exists (
+            select 1 from ladder_players p
+            where p.ladder_id = l.id and p.user_id = ${context.userId}
+          )
+        )
+      order by c.created_at desc
+      limit 20
+    `;
+    const matches = await sql<{
+      id: string;
+      ladder_id: string;
+      ladder_name: string;
+      winner_name: string;
+      loser_name: string;
+      winner_score: number;
+      loser_score: number;
+      winner_rank_before: number;
+      loser_rank_before: number;
+      swapped: boolean;
+      stip_awarded: boolean;
+      played_at: unknown;
+    }>`
+      select m.id, m.ladder_id, l.name as ladder_name,
+        m.winner_name, m.loser_name, m.winner_score, m.loser_score,
+        m.winner_rank_before, m.loser_rank_before, m.swapped, m.stip_awarded, m.played_at
+      from ladder_matches m
+      join ladders l on l.id = m.ladder_id
+      where l.owner_id = ${context.userId}
+        or exists (
+          select 1 from ladder_players p
+          where p.ladder_id = l.id and p.user_id = ${context.userId}
+        )
+      order by m.played_at desc
+      limit 4
+    `;
+    return {
+      challenges: challenges.map((row) => ({
+        id: row.id,
+        ladderId: row.ladder_id,
+        ladderName: row.ladder_name,
+        challengerName: row.challenger_name,
+        defenderName: row.defender_name,
+        status: row.status,
+        kind: row.kind === "invite" ? "invite" : "challenge",
+        createdAt: iso(row.created_at),
+      })),
+      matches: matches.map((row) => ({
+        id: row.id,
+        ladderId: row.ladder_id,
+        ladderName: row.ladder_name,
+        winnerName: row.winner_name,
+        loserName: row.loser_name,
+        winnerScore: Number(row.winner_score),
+        loserScore: Number(row.loser_score),
+        winnerRankBefore: Number(row.winner_rank_before),
+        loserRankBefore: Number(row.loser_rank_before),
+        swapped: Boolean(row.swapped),
+        stipAwarded: Boolean(row.stip_awarded),
+        playedAt: iso(row.played_at),
+      })),
+    };
   });
 
 const createInput = (input: {

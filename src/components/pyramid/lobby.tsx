@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
-import { UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { createLadder, joinLadder, listMyLadders, previewInvite } from "@/lib/pyramid/api";
-import type { InvitePreview, LadderSummary } from "@/lib/pyramid/types";
-import { WALL } from "@/lib/pyramid/roster";
+import { homeFeed, joinLadder, listMyLadders, previewInvite } from "@/lib/pyramid/api";
+import { challengeWhen, fmtWhen, matchSummary } from "@/lib/pyramid/format";
+import { useDemoStore } from "@/lib/pyramid/demo-store";
+import type { HomeChallenge, HomeMatch, InvitePreview, LadderSummary } from "@/lib/pyramid/types";
 import { RackMark } from "./mark";
 import { Shell } from "./shell";
 import { Splash } from "./splash";
@@ -37,42 +37,110 @@ function LobbyBody() {
             <p className="font-display text-2xl italic leading-none">Piramide</p>
           </div>
         </div>
-        {isPending ? (
-          <div className="h-8 w-24 animate-pulse rounded-full bg-baize" />
-        ) : user ? (
-          <UserButton />
-        ) : null}
+        {isPending ? <div className="h-8 w-24 animate-pulse rounded-full bg-baize" /> : null}
       </header>
-
-      <section className="mb-8 max-w-xl">
-        <h1 className="font-display text-5xl italic leading-tight">De ladder naast de pooltafel.</h1>
-        <p className="mt-3 text-ivory-dim">
-          Briefjes op een piramide. Je daagt iemand uit die maximaal vier plaatsen boven je staat. Win je,
-          dan wissel je. Houdt de nummer 1 stand, dan een stip op de troon.
-        </p>
-      </section>
-
-      <ul className="mb-8 grid gap-3 sm:grid-cols-3">
-        {[
-          ["Uitdagen", "Tot vier plaatsen omhoog. Onder je, tot vier plaatsen, nodig je uit."],
-          ["Wisselen", "De winnaar pakt de hogere plek. Verder schuift er niets."],
-          ["Stippen", "Elke geslaagde verdediging van plek 1 is een stip."],
-        ].map(([title, body]) => (
-          <li key={title} className="panel p-4">
-            <h2 className="font-display text-2xl italic">{title}</h2>
-            <p className="mt-1 text-sm text-ivory-dim">{body}</p>
-          </li>
-        ))}
-      </ul>
 
       {isPending ? <div className="panel h-40 animate-pulse" /> : user ? <SignedIn /> : <SignedOut />}
     </Shell>
   );
 }
 
+function DemoActivity() {
+  const players = useDemoStore((state) => state.players);
+  const challenges = useDemoStore((state) => state.challenges);
+  const matches = useDemoStore((state) => state.matches);
+  const name = (id: string) => players.find((player) => player.id === id)?.name ?? "Onbekend";
+  const open = challenges.filter((item) => item.status === "open" || item.status === "accepted");
+  return (
+    <ActivityBoard
+      challenges={open.map((item) => ({
+        id: item.id,
+        ladderId: null,
+        title:
+          item.kind === "invite"
+            ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit`
+            : `${name(item.challengerId)} daagt ${name(item.defenderId)} uit`,
+        detail: `${item.status === "accepted" ? "afgesproken" : "open"} · ${challengeWhen(item)}`,
+      }))}
+      matches={matches.slice(0, 4).map((item) => ({
+        id: item.id,
+        ladderId: null,
+        title: matchSummary(item),
+        detail: fmtWhen(item.playedAt),
+      }))}
+    />
+  );
+}
+
+function ActivityBoard({
+  challenges,
+  matches,
+  loading = false,
+}: {
+  challenges: { id: string; ladderId: string | null; title: string; detail: string }[];
+  matches: { id: string; ladderId: string | null; title: string; detail: string }[];
+  loading?: boolean;
+}) {
+  if (loading) return <div className="panel h-24 animate-pulse" />;
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Uitdagingen</h2>
+        {challenges.length === 0 ? (
+          <p className="panel p-4 text-sm text-ivory-dim">Geen open uitdagingen.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {challenges.map((item) => (
+              <li key={item.id}>
+                {item.ladderId ? (
+                  <Link to="/ladder/$id" params={{ id: item.ladderId }} className="panel block p-4">
+                    <span className="font-display block text-xl italic">{item.title}</span>
+                    <span className="text-sm text-ivory-dim">{item.detail}</span>
+                  </Link>
+                ) : (
+                  <Link to="/demo" className="panel block p-4">
+                    <span className="font-display block text-xl italic">{item.title}</span>
+                    <span className="text-sm text-ivory-dim">{item.detail}</span>
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Recente uitslagen</h2>
+        {matches.length === 0 ? (
+          <p className="panel p-4 text-sm text-ivory-dim">Nog geen uitslagen.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {matches.map((item) => (
+              <li key={item.id}>
+                {item.ladderId ? (
+                  <Link to="/ladder/$id" params={{ id: item.ladderId }} className="panel block p-4">
+                    <span className="font-display block text-xl italic">{item.title}</span>
+                    <span className="text-sm text-ivory-dim">{item.detail}</span>
+                  </Link>
+                ) : (
+                  <Link to="/demo" className="panel block p-4">
+                    <span className="font-display block text-xl italic">{item.title}</span>
+                    <span className="text-sm text-ivory-dim">{item.detail}</span>
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function SignedOut() {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="flex flex-col gap-6">
+      <DemoActivity />
+      <div className="grid gap-3 sm:grid-cols-2">
       <Link to="/demo" className="panel flex flex-col gap-3 p-5">
         <span className="text-xs font-semibold tracking-widest text-brass uppercase">Zonder account</span>
         <span className="font-display text-3xl italic">Speel de demo</span>
@@ -89,6 +157,7 @@ function SignedOut() {
         </span>
         <SignInButtons />
       </div>
+    </div>
     </div>
   );
 }
@@ -124,14 +193,26 @@ export function SignInButtons({ callback = "/" }: { callback?: string }) {
 function SignedIn() {
   const navigate = useNavigate();
   const [ladders, setLadders] = useState<LadderSummary[] | null>(null);
+  const [canJoin, setCanJoin] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"create" | "join" | null>(null);
+  const [mode, setMode] = useState<"join" | null>(null);
+
+  const [feed, setFeed] = useState<{ challenges: HomeChallenge[]; matches: HomeMatch[] } | null>(null);
 
   useEffect(() => {
     let active = true;
     listMyLadders()
-      .then((rows) => {
-        if (active) setLadders(rows);
+      .then((result) => {
+        if (!active) return;
+        setLadders(result.ladders);
+        setCanJoin(result.canJoin);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorText(reason));
+      });
+    homeFeed()
+      .then((result) => {
+        if (active) setFeed(result);
       })
       .catch((reason: unknown) => {
         if (active) setError(errorText(reason));
@@ -143,23 +224,47 @@ function SignedIn() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn btn-brass" onClick={() => setMode(mode === "create" ? null : "create")}>
-          Nieuwe piramide
-        </button>
-        <button type="button" className="btn btn-ghost" onClick={() => setMode(mode === "join" ? null : "join")}>
-          Deelnemen met code
-        </button>
-        <Link to="/demo" className="btn btn-ghost">
-          Demo
-        </Link>
-      </div>
-      {mode === "create" ? (
-        <CreateForm
-          onCreated={(id) => void navigate({ to: "/ladder/$id", params: { id } })}
-        />
+      <ActivityBoard
+        loading={feed == null && !error}
+        challenges={(feed?.challenges ?? []).map((item) => ({
+          id: item.id,
+          ladderId: item.ladderId,
+          title:
+            item.kind === "invite"
+              ? `${item.challengerName} nodigt ${item.defenderName} uit`
+              : `${item.challengerName} daagt ${item.defenderName} uit`,
+          detail: `${item.ladderName} · ${item.status === "accepted" ? "afgesproken" : "open"}`,
+        }))}
+        matches={(feed?.matches ?? []).map((item) => ({
+          id: item.id,
+          ladderId: item.ladderId,
+          title: matchSummary({
+            id: item.id,
+            winnerId: null,
+            loserId: null,
+            winnerName: item.winnerName,
+            loserName: item.loserName,
+            winnerScore: item.winnerScore,
+            loserScore: item.loserScore,
+            winnerRankBefore: item.winnerRankBefore,
+            loserRankBefore: item.loserRankBefore,
+            swapped: item.swapped,
+            stipAwarded: item.stipAwarded,
+            playedAt: item.playedAt,
+            note: "",
+            challengeId: null,
+          }),
+          detail: `${item.ladderName} · ${fmtWhen(item.playedAt)}`,
+        }))}
+      />
+      {canJoin ? (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn btn-ghost" onClick={() => setMode(mode === "join" ? null : "join")}>
+            Deelnemen met code
+          </button>
+        </div>
       ) : null}
-      {mode === "join" ? (
+      {mode === "join" && canJoin ? (
         <JoinForm onJoined={(id) => void navigate({ to: "/ladder/$id", params: { id } })} />
       ) : null}
       {error ? <p className="text-sm text-brass">{error}</p> : null}
@@ -191,65 +296,6 @@ function SignedIn() {
         ))}
       </ul>
     </div>
-  );
-}
-
-function CreateForm({ onCreated }: { onCreated: (id: string) => void }) {
-  const [name, setName] = useState("Kantoorpiramide");
-  const [importWall, setImportWall] = useState(true);
-  const [claim, setClaim] = useState("Bart van der Poel");
-  const [custom, setCustom] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <form
-      className="panel flex flex-col gap-3 p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const claimName = importWall ? (claim === "__new" ? custom : claim) : custom || claim;
-        setBusy(true);
-        setError(null);
-        createLadder({ data: { name, importWall, claimName } })
-          .then((result) => onCreated(result.id))
-          .catch((reason: unknown) => {
-            setError(errorText(reason));
-            setBusy(false);
-          });
-      }}
-    >
-      <label className="flex flex-col gap-1 text-sm">
-        Naam van de piramide
-        <input className="field" value={name} onChange={(event) => setName(event.target.value)} required />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={importWall} onChange={(event) => setImportWall(event.target.checked)} />
-        Begin met de namen van de muur
-      </label>
-      {importWall ? (
-        <label className="flex flex-col gap-1 text-sm">
-          Welk briefje ben jij?
-          <select className="field" value={claim} onChange={(event) => setClaim(event.target.value)}>
-            {WALL.map((person) => (
-              <option key={person.id} value={person.name}>
-                {person.name}
-              </option>
-            ))}
-            <option value="__new">Ik sta er nog niet bij</option>
-          </select>
-        </label>
-      ) : null}
-      {!importWall || claim === "__new" ? (
-        <label className="flex flex-col gap-1 text-sm">
-          Jouw naam
-          <input className="field" value={custom} onChange={(event) => setCustom(event.target.value)} required />
-        </label>
-      ) : null}
-      {error ? <p className="text-sm text-brass">{error}</p> : null}
-      <button type="submit" className="btn btn-brass self-start" disabled={busy}>
-        {busy ? "Bezig…" : "Piramide openen"}
-      </button>
-    </form>
   );
 }
 

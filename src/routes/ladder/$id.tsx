@@ -9,7 +9,6 @@ import {
   nudgeLadderPlayer,
   recordResult,
   removeLadderPlayer,
-  renameMe,
   respondChallenge,
   setAvailability,
 } from "@/lib/pyramid/api";
@@ -40,15 +39,20 @@ function LiveLadder() {
   useEffect(() => {
     if (isPending || !user) return;
     let active = true;
-    getLadder({ data: id })
-      .then((snapshot) => {
-        if (active) setData(snapshot);
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(errorText(reason));
-      });
+    const refresh = () => {
+      getLadder({ data: id })
+        .then((snapshot) => {
+          if (active) setData(snapshot);
+        })
+        .catch((reason: unknown) => {
+          if (active) setError(errorText(reason));
+        });
+    };
+    refresh();
+    window.addEventListener("piramide-refresh", refresh);
     return () => {
       active = false;
+      window.removeEventListener("piramide-refresh", refresh);
     };
   }, [id, isPending, user]);
 
@@ -120,14 +124,6 @@ function LiveLadder() {
         data.amOwner
           ? async (name) => {
               await addLadderPlayer({ data: { ladderId: id, name } });
-              await load();
-            }
-          : undefined
-      }
-      onRename={
-        data.meId
-          ? async (name) => {
-              await renameMe({ data: { ladderId: id, name } });
               await load();
             }
           : undefined

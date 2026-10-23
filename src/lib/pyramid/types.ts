@@ -83,6 +83,32 @@ export type LadderSummary = {
   openChallenges: number;
 };
 
+export type HomeChallenge = {
+  id: string;
+  ladderId: string;
+  ladderName: string;
+  challengerName: string;
+  defenderName: string;
+  status: ChallengeStatus;
+  kind: "challenge" | "invite";
+  createdAt: string;
+};
+
+export type HomeMatch = {
+  id: string;
+  ladderId: string;
+  ladderName: string;
+  winnerName: string;
+  loserName: string;
+  winnerScore: number;
+  loserScore: number;
+  winnerRankBefore: number;
+  loserRankBefore: number;
+  swapped: boolean;
+  stipAwarded: boolean;
+  playedAt: string;
+};
+
 export type InvitePreview = {
   id: string;
   name: string;

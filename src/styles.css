@@ -134,6 +134,18 @@
     background: color-mix(in srgb, var(--color-ivory) 8%, transparent);
   }
 
+  .tab-tile {
+    width: 100%;
+    height: 4.5rem;
+    min-height: 4.5rem;
+    border-radius: 0.45rem;
+    padding: 0.4rem 0.3rem;
+    text-align: center;
+    font-size: 0.75rem;
+    line-height: 1.15;
+    white-space: normal;
+  }
+
   .btn-ink {
     background: var(--color-ink);
     color: var(--color-ivory);
