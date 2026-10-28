@@ -73,11 +73,21 @@ export function lastResults(matches: Match[]): Map<string, LastResult> {
   for (const match of matches) {
     const at = new Date(match.playedAt).getTime();
     if (Number.isNaN(at)) continue;
-    const draw = match.winnerScore === match.loserScore;
-    const sides = [
-      { id: match.winnerId, line: draw ? `${match.winnerScore}–${match.loserScore} gelijk` : `${match.winnerScore}–${match.loserScore} winst` },
-      { id: match.loserId, line: draw ? `${match.winnerScore}–${match.loserScore} gelijk` : `${match.loserScore}–${match.winnerScore} verlies` },
-    ];
+    const draw = match.sides && match.sides.length > 2
+      ? match.sides.every((side) => side.score === match.sides![0]?.score)
+      : match.winnerScore === match.loserScore;
+    const sides = match.sides && match.sides.length > 2
+      ? match.sides.map((side) => {
+          const best = Math.max(...match.sides!.map((item) => item.score));
+          const leaders = match.sides!.filter((item) => item.score === best).length;
+          const won = !draw && side.score === best && leaders === 1;
+          const line = won ? `${side.score} winst` : draw ? `${side.score} gelijk` : `${side.score} punten`;
+          return { id: side.id, line };
+        })
+      : [
+          { id: match.winnerId, line: draw ? `${match.winnerScore}–${match.loserScore} gelijk` : `${match.winnerScore}–${match.loserScore} winst` },
+          { id: match.loserId, line: draw ? `${match.winnerScore}–${match.loserScore} gelijk` : `${match.loserScore}–${match.winnerScore} verlies` },
+        ];
     for (const side of sides) {
       if (!side.id) continue;
       const prev = found.get(side.id);

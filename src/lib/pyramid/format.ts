@@ -59,6 +59,13 @@ export function challengeWhen(challenge: Pick<Challenge, "proposedDay" | "propos
 }
 
 export function matchSummary(match: Match) {
+  if (match.sides && match.sides.length > 2) {
+    const score = match.sides.map((side) => `${side.name} ${side.score}`).join(", ");
+    const moved = match.sides.filter((side) => side.rankBefore !== side.rankAfter);
+    if (moved.length === 0) return `${score}. De briefjes blijven hangen.`;
+    const shifts = moved.map((side) => `${side.name} naar plek ${side.rankAfter}`).join(", ");
+    return `${score}. ${shifts}. Briefjes ertussen blijven hangen.`;
+  }
   const score = `${match.winnerScore}–${match.loserScore}`;
   if (match.winnerScore === match.loserScore) {
     return `${match.winnerName} en ${match.loserName} speelden gelijk (${score}). De briefjes blijven hangen.`;

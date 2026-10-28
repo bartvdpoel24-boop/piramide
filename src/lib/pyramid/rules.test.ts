@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleMatch } from "./rules.ts";
+import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleGroup, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
 function player(id: string, rank: number): Player {
@@ -112,5 +112,31 @@ describe("piramide rules", () => {
     assert.equal(back.find((item) => item.id === "b")?.rank, 3);
     assert.equal(sameOutcome(2, 0, 3, 1), true);
     assert.equal(sameOutcome(2, 0, 1, 2), false);
+  });
+
+  it("reorders only the players in a group and leaves the cards between them", () => {
+    const wall = [player("a", 1), player("b", 2), player("c", 3), player("d", 4), player("e", 5)];
+    const settled = settleGroup(wall, [
+      { id: "a", score: 0 },
+      { id: "c", score: 1 },
+      { id: "e", score: 2 },
+    ]);
+    assert.deepEqual(
+      settled.players.map((item) => [item.id, item.rank]).sort((a, b) => Number(a[1]) - Number(b[1])),
+      [
+        ["e", 1],
+        ["b", 2],
+        ["c", 3],
+        ["d", 4],
+        ["a", 5],
+      ],
+    );
+    const tied = settleGroup(wall, [
+      { id: "a", score: 1 },
+      { id: "e", score: 1 },
+    ]);
+    assert.equal(tied.draw, true);
+    assert.equal(tied.players.find((item) => item.id === "b")?.rank, 2);
+    assert.equal(tied.swapped, false);
   });
 });

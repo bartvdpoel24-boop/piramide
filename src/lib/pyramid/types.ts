@@ -45,6 +45,14 @@ export type Challenge = {
   createdAt: string;
 };
 
+export type MatchSide = {
+  id: string;
+  name: string;
+  score: number;
+  rankBefore: number;
+  rankAfter: number;
+};
+
 export type Match = {
   id: string;
   winnerId: string | null;
@@ -60,6 +68,7 @@ export type Match = {
   playedAt: string;
   note: string;
   challengeId: string | null;
+  sides?: MatchSide[];
 };
 
 export type LadderSnapshot = {

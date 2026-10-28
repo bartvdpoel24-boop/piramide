@@ -189,6 +189,77 @@ export function reviseMatch(
   return { ...settled, players: [...settled.players, ...next.filter((player) => !isOnWall(player))] };
 }
 
+export type GroupPlace = {
+  id: string;
+  name: string;
+  score: number;
+  rankBefore: number;
+  rankAfter: number;
+};
+
+export type GroupResult = {
+  players: Player[];
+  places: GroupPlace[];
+  swapped: boolean;
+  stipAwarded: boolean;
+  draw: boolean;
+};
+
+/** The players who played take each other's places. Higher score gets the better place. Cards between them stay. */
+export function settleGroup(players: Player[], sides: { id: string; score: number }[]): GroupResult {
+  if (sides.length < 2) throw new Error("Kies minstens twee spelers.");
+  const seen = new Set<string>();
+  const picked: { player: Player; score: number }[] = [];
+  for (const side of sides) {
+    if (!Number.isInteger(side.score) || side.score < 0 || side.score > 15) {
+      throw new Error("De score ligt tussen 0 en 15.");
+    }
+    if (seen.has(side.id)) throw new Error("Een speler speelt maar één keer mee.");
+    seen.add(side.id);
+    const player = players.find((item) => item.id === side.id && isOnWall(item));
+    if (!player) throw new Error("Speler niet gevonden.");
+    picked.push({ player, score: side.score });
+  }
+
+  const slots = picked.map((item) => item.player.rank).sort((a, b) => a - b);
+  const scored = [...picked].sort((a, b) => b.score - a.score || a.player.rank - b.player.rank);
+  const draw = scored.every((item) => item.score === scored[0]?.score);
+  const assignment = new Map<string, number>();
+  scored.forEach((item, index) => {
+    assignment.set(item.player.id, draw ? item.player.rank : slots[index]!);
+  });
+
+  const king = players.find((player) => isOnWall(player) && player.rank === 1);
+  const kingScore = king ? scored.find((item) => item.player.id === king.id)?.score : undefined;
+  const others = scored.filter((item) => item.player.id !== king?.id).map((item) => item.score);
+  const stipAwarded = Boolean(
+    king && kingScore != null && assignment.get(king.id) === 1 && others.length > 0 && kingScore > Math.max(...others),
+  );
+
+  const next = players.map((player) => {
+    const rank = assignment.get(player.id);
+    const stippen = stipAwarded && player.id === king?.id ? player.stippen + 1 : player.stippen;
+    if (rank == null) return stippen === player.stippen ? player : { ...player, stippen };
+    return { ...player, rank, stippen };
+  });
+
+  const places = scored.map((item) => ({
+    id: item.player.id,
+    name: item.player.name,
+    score: item.score,
+    rankBefore: item.player.rank,
+    rankAfter: assignment.get(item.player.id) ?? item.player.rank,
+  }));
+
+  return {
+    players: next,
+    places,
+    swapped: places.some((place) => place.rankBefore !== place.rankAfter),
+    stipAwarded,
+    draw,
+  };
+}
+
 export function removePlayer(players: Player[], id: string) {
   const me = players.find((player) => player.id === id);
   if (!me) throw new Error("Speler niet gevonden.");
