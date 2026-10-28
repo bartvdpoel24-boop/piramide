@@ -4,8 +4,10 @@ import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { homeFeed, joinLadder, listMyLadders, previewInvite } from "@/lib/pyramid/api";
 import { challengeWhen, fmtWhen, matchSummary } from "@/lib/pyramid/format";
+import { currentMonthLabel, monthWinShare, type StatRow } from "@/lib/pyramid/stats";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
 import type { HomeChallenge, HomeMatch, InvitePreview, LadderSummary } from "@/lib/pyramid/types";
+import { WinPie } from "./stats-panel";
 import { RackMark } from "./mark";
 import { Shell } from "./shell";
 import { Splash } from "./splash";
@@ -53,6 +55,7 @@ function DemoActivity() {
   const open = challenges.filter((item) => item.status === "open" || item.status === "accepted");
   return (
     <ActivityBoard
+      monthWins={monthWinShare(matches)}
       challenges={open.map((item) => ({
         id: item.id,
         ladderId: null,
@@ -75,15 +78,21 @@ function DemoActivity() {
 function ActivityBoard({
   challenges,
   matches,
+  monthWins,
   loading = false,
 }: {
   challenges: { id: string; ladderId: string | null; title: string; detail: string }[];
   matches: { id: string; ladderId: string | null; title: string; detail: string }[];
+  monthWins: StatRow[];
   loading?: boolean;
 }) {
   if (loading) return <div className="panel h-24 animate-pulse" />;
   return (
     <div className="flex flex-col gap-4">
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Winsten in {currentMonthLabel()}</h2>
+        <WinPie rows={monthWins} empty="Deze maand nog geen winst." />
+      </section>
       <section className="flex flex-col gap-2">
         <h2 className="font-display text-2xl italic">Uitdagingen</h2>
         {challenges.length === 0 ? (
@@ -197,7 +206,7 @@ function SignedIn() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"join" | null>(null);
 
-  const [feed, setFeed] = useState<{ challenges: HomeChallenge[]; matches: HomeMatch[] } | null>(null);
+  const [feed, setFeed] = useState<{ challenges: HomeChallenge[]; matches: HomeMatch[]; monthWins: StatRow[] } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -226,6 +235,7 @@ function SignedIn() {
     <div className="flex flex-col gap-4">
       <ActivityBoard
         loading={feed == null && !error}
+        monthWins={feed?.monthWins ?? []}
         challenges={(feed?.challenges ?? []).map((item) => ({
           id: item.id,
           ladderId: item.ladderId,
@@ -299,13 +309,47 @@ function SignedIn() {
   );
 }
 
-function JoinForm({ onJoined }: { onJoined: (id: string) => void }) {
-  const [code, setCode] = useState("");
+export function JoinForm({
+  onJoined,
+  initialCode = "",
+  locked = false,
+}: {
+  onJoined: (id: string) => void;
+  initialCode?: string;
+  locked?: boolean;
+}) {
+  const [code, setCode] = useState(initialCode);
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [playerId, setPlayerId] = useState<string | "new">("new");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!initialCode) return;
+    let active = true;
+    setBusy(true);
+    previewInvite({ data: initialCode })
+      .then((result) => {
+        if (!active) return;
+        setPreview(result);
+        if (result.alreadyIn) {
+          onJoined(result.id);
+          return;
+        }
+        const open = result.players.find((player) => !player.claimed);
+        setPlayerId(open?.id ?? "new");
+        setBusy(false);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(errorText(reason));
+        setBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [initialCode, onJoined]);
 
   return (
     <form
@@ -352,10 +396,12 @@ function JoinForm({ onJoined }: { onJoined: (id: string) => void }) {
           className="field uppercase"
           value={code}
           onChange={(event) => {
+            if (locked) return;
             setCode(event.target.value);
             setPreview(null);
           }}
           autoCapitalize="characters"
+          readOnly={locked}
           required
         />
       </label>

@@ -109,6 +109,86 @@ export function nudgePlayer(players: Player[], id: string, direction: -1 | 1) {
     .sort((a, b) => a.rank - b.rank);
 }
 
+export function isOnWall(player: { active?: boolean }) {
+  return player.active !== false;
+}
+
+export function parkPlayer(players: Player[], id: string) {
+  const me = players.find((player) => player.id === id);
+  if (!me || !isOnWall(me)) throw new Error("Speler niet gevonden.");
+  const staying = players.filter((player) => player.id !== id && isOnWall(player));
+  if (staying.length < 1) throw new Error("De laatste speler blijft op de ladder.");
+  const ordered = [...staying].sort((a, b) => a.rank - b.rank).map((player, index) => ({ ...player, rank: index + 1 }));
+  const byId = new Map(ordered.map((player) => [player.id, player]));
+  const parkedRank = Math.min(0, ...players.map((player) => player.rank)) - 1;
+  return players.map((player) => {
+    if (player.id === id) return { ...player, active: false, rank: parkedRank };
+    return byId.get(player.id) ?? player;
+  });
+}
+
+export function restorePlayer(players: Player[], id: string) {
+  const me = players.find((player) => player.id === id);
+  if (!me || isOnWall(me)) throw new Error("Dit briefje hangt al.");
+  const bottom = Math.max(0, ...players.filter(isOnWall).map((player) => player.rank));
+  return players.map((player) => (player.id === id ? { ...player, active: true, rank: bottom + 1 } : player));
+}
+
+export function sameOutcome(winnerScore: number, loserScore: number, nextWinnerScore: number, nextLoserScore: number) {
+  const wasDraw = winnerScore === loserScore;
+  const isDraw = nextWinnerScore === nextLoserScore;
+  if (wasDraw || isDraw) return wasDraw && isDraw;
+  return nextWinnerScore > nextLoserScore;
+}
+
+export function reviseMatch(
+  players: Player[],
+  match: { winnerId: string | null; loserId: string | null; swapped: boolean; stipAwarded: boolean },
+  winnerScore: number,
+  loserScore: number,
+): SettleResult {
+  const winner = players.find((player) => player.id === match.winnerId);
+  const loser = players.find((player) => player.id === match.loserId);
+  if (!winner || !loser) throw new Error("Een van de spelers is er niet meer.");
+  let next = players.map((player) => ({ ...player }));
+  if (match.stipAwarded) {
+    next = next.map((player) =>
+      player.id === winner.id ? { ...player, stippen: Math.max(0, player.stippen - 1) } : player,
+    );
+  }
+  if (match.swapped && isOnWall(winner) && isOnWall(loser)) {
+    const left = next.find((player) => player.id === winner.id);
+    const right = next.find((player) => player.id === loser.id);
+    if (left && right) {
+      next = next.map((player) => {
+        if (player.id === left.id) return { ...player, rank: right.rank };
+        if (player.id === right.id) return { ...player, rank: left.rank };
+        return player;
+      });
+    }
+  }
+  if (!isOnWall(winner) || !isOnWall(loser)) {
+    const draw = winnerScore === loserScore;
+    const winnerSide = !draw && winnerScore > loserScore;
+    return {
+      winnerId: winnerSide || draw ? winner.id : loser.id,
+      loserId: winnerSide || draw ? loser.id : winner.id,
+      winnerName: winnerSide || draw ? winner.name : loser.name,
+      loserName: winnerSide || draw ? loser.name : winner.name,
+      winnerScore: winnerSide || draw ? winnerScore : loserScore,
+      loserScore: winnerSide || draw ? loserScore : winnerScore,
+      winnerRankBefore: winner.rank,
+      loserRankBefore: loser.rank,
+      swapped: false,
+      stipAwarded: false,
+      draw,
+      players: next,
+    };
+  }
+  const settled = settleMatch(next.filter(isOnWall), winner.id, loser.id, winnerScore, loserScore, 99);
+  return { ...settled, players: [...settled.players, ...next.filter((player) => !isOnWall(player))] };
+}
+
 export function removePlayer(players: Player[], id: string) {
   const me = players.find((player) => player.id === id);
   if (!me) throw new Error("Speler niet gevonden.");

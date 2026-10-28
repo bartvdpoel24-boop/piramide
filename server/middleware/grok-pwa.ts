@@ -71,10 +71,7 @@ export default async function grokPwaMiddleware(
   const urlWithQuery = path + event.url.search;
 
   if (path === "/__grok/manifest.webmanifest" || path === "/__grok/manifest.json") {
-    const manifest = (
-      renderWebManifest as (host: string | undefined, site?: { title?: string }) => string
-    )(requestHost(event), grokOgIdentity.site ?? {});
-    return new Response(manifest, {
+    return new Response(renderWebManifest(requestHost(event)), {
       headers: {
         "content-type": "application/manifest+json; charset=utf-8",
         "cache-control": "no-cache",

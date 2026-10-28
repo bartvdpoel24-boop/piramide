@@ -8,6 +8,7 @@ export type StatRow = { label: string; value: number; text: string };
 export type PyramidStats = {
   months: StatRow[];
   wins: StatRow[];
+  winShare: StatRow[];
   rates: StatRow[];
   stippen: StatRow[];
   played: number;
@@ -40,6 +41,31 @@ function recentMonths(now = new Date(), count = 6) {
     keys.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`);
   }
   return keys;
+}
+
+export function currentMonthLabel(now = new Date()) {
+  const key = monthKey(now.toISOString());
+  const [year, month] = key.split("-");
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+  return new Intl.DateTimeFormat("nl-NL", { month: "long", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+export function monthWinShare(
+  matches: { winnerName: string; loserName: string; winnerScore: number; loserScore: number; playedAt: string }[],
+  now = new Date(),
+): StatRow[] {
+  const current = monthKey(now.toISOString());
+  const record = new Map<string, number>();
+  for (const match of matches) {
+    if (monthKey(match.playedAt) !== current) continue;
+    if (match.winnerScore === match.loserScore) continue;
+    const name = match.winnerName.trim();
+    if (!name) continue;
+    record.set(name, (record.get(name) ?? 0) + 1);
+  }
+  return [...record]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "nl"))
+    .map(([label, value]) => ({ label, value, text: String(value) }));
 }
 
 export function lastResults(matches: Match[]): Map<string, LastResult> {
@@ -95,11 +121,12 @@ export function pyramidStats(
     return { label: monthLabel(key), value, text: String(value) };
   });
 
-  const wins = [...record]
+  const winShare = [...record]
     .filter(([, row]) => row.wins > 0)
     .sort((a, b) => b[1].wins - a[1].wins || a[0].localeCompare(b[0], "nl"))
-    .slice(0, 8)
     .map(([label, row]) => ({ label, value: row.wins, text: String(row.wins) }));
+
+  const wins = winShare.slice(0, 8);
 
   const seasoned = [...record].filter(([, row]) => row.played >= 3);
   const pool = seasoned.length > 0 ? seasoned : [...record].filter(([, row]) => row.played > 0);
@@ -121,6 +148,7 @@ export function pyramidStats(
   return {
     months,
     wins,
+    winShare,
     rates,
     stippen,
     played: matches.length,

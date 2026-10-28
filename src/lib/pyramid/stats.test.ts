@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { lastResults, pyramidStats } from "./stats.ts";
+import { lastResults, monthWinShare, pyramidStats } from "./stats.ts";
 import type { Match } from "./types.ts";
 
 function match(partial: Partial<Match> & Pick<Match, "winnerName" | "loserName" | "playedAt">): Match {
@@ -44,6 +44,18 @@ describe("pyramid stats", () => {
     assert.equal(october?.value, 2);
     assert.equal(stats.wins[0]?.label, "Tim");
     assert.equal(stats.wins[0]?.value, 1);
+    assert.equal(stats.winShare.length, 1);
+    assert.deepEqual(
+      monthWinShare(
+        [
+          { winnerName: "Tim", loserName: "Bart", winnerScore: 2, loserScore: 0, playedAt: "2026-10-02T12:00:00.000Z" },
+          { winnerName: "Bart", loserName: "Tim", winnerScore: 1, loserScore: 1, playedAt: "2026-10-03T12:00:00.000Z" },
+          { winnerName: "Louis", loserName: "Tim", winnerScore: 2, loserScore: 1, playedAt: "2026-09-15T12:00:00.000Z" },
+        ],
+        new Date("2026-10-23T12:00:00.000Z"),
+      ).map((row) => row.label),
+      ["Tim"],
+    );
     assert.equal(stats.stippen[0]?.value, 2);
   });
 

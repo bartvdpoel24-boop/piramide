@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DemoRouteImport } from './routes/demo'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as JoinCodeRouteImport } from './routes/join/$code'
 import { Route as LadderIdRouteImport } from './routes/ladder/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
@@ -30,6 +31,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const JoinCodeRoute = JoinCodeRouteImport.update({
+  id: '/join/$code',
+  path: '/join/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LadderIdRoute = LadderIdRouteImport.update({
   id: '/ladder/$id',
   path: '/ladder/$id',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
+  '/join/$code': typeof JoinCodeRoute
   '/ladder/$id': typeof LadderIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
+  '/join/$code': typeof JoinCodeRoute
   '/ladder/$id': typeof LadderIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -60,21 +68,31 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/login': typeof LoginRoute
+  '/join/$code': typeof JoinCodeRoute
   '/ladder/$id': typeof LadderIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/demo' | '/login' | '/ladder/$id' | '/api/auth/$'
+  fullPaths:
+    '/' | '/demo' | '/login' | '/join/$code' | '/ladder/$id' | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/demo' | '/login' | '/ladder/$id' | '/api/auth/$'
-  id: '__root__' | '/' | '/demo' | '/login' | '/ladder/$id' | '/api/auth/$'
+  to: '/' | '/demo' | '/login' | '/join/$code' | '/ladder/$id' | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/demo'
+    | '/login'
+    | '/join/$code'
+    | '/ladder/$id'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DemoRoute: typeof DemoRoute
   LoginRoute: typeof LoginRoute
+  JoinCodeRoute: typeof JoinCodeRoute
   LadderIdRoute: typeof LadderIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -102,6 +120,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/join/$code': {
+      id: '/join/$code'
+      path: '/join/$code'
+      fullPath: '/join/$code'
+      preLoaderRoute: typeof JoinCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ladder/$id': {
       id: '/ladder/$id'
       path: '/ladder/$id'
@@ -123,6 +148,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DemoRoute: DemoRoute,
   LoginRoute: LoginRoute,
+  JoinCodeRoute: JoinCodeRoute,
   LadderIdRoute: LadderIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

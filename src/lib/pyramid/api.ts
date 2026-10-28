@@ -1,9 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, normalizeSlots, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleMatch } from "./rules";
 import { challengeMail, cleanEmail } from "./email";
 import { challengeWhen } from "./format";
+import { monthWinShare } from "./stats";
 import { noteForIndex, WALL } from "./roster";
+import { asNoteColor } from "./notes";
+import { normalizeInviteCode } from "./share";
 import {
   CHALLENGE_RANGE,
   NOTE_COLORS,
@@ -23,10 +26,6 @@ type Sql = Awaited<ReturnType<(typeof import("@/lib/db"))["getSql"]>>;
 async function db() {
   const { getSql } = await import("@/lib/db");
   return getSql();
-}
-
-function asNote(value: string): NoteColor {
-  return NOTE_COLORS.includes(value as NoteColor) ? (value as NoteColor) : "cream";
 }
 
 function iso(value: unknown) {
@@ -49,13 +48,15 @@ type PlayerRow = {
   stippen: number;
   note_color: string;
   notify_email: string | null;
+  active: boolean;
 };
 
-async function loadPlayers(sql: Sql, ladderId: string): Promise<Player[]> {
+async function loadPlayers(sql: Sql, ladderId: string, parked = false): Promise<Player[]> {
   const rows = await sql<PlayerRow>`
-    select id, user_id, display_name, rank, stippen, note_color, notify_email
+    select id, user_id, display_name, rank, stippen, note_color, notify_email, active
     from ladder_players
     where ladder_id = ${ladderId}
+      and (${parked}::boolean or active)
     order by rank
   `;
   const slots = await sql<{ player_id: string; day: number; start_min: number; end_min: number }>`
@@ -76,10 +77,11 @@ async function loadPlayers(sql: Sql, ladderId: string): Promise<Player[]> {
     name: row.display_name,
     rank: Number(row.rank),
     stippen: Number(row.stippen),
-    note: asNote(row.note_color),
+    note: asNoteColor(row.note_color),
     userId: row.user_id,
     email: row.notify_email ?? "",
     availability: byPlayer.get(row.id) ?? [],
+    active: row.active !== false,
   }));
 }
 
@@ -108,7 +110,7 @@ async function requireLadder(sql: Sql, userId: string, ladderId: string) {
 
 async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<LadderSnapshot> {
   const access = await requireLadder(sql, userId, ladderId);
-  const players = await loadPlayers(sql, ladderId);
+  const players = await loadPlayers(sql, ladderId, true);
   const challenges = await sql<{
     id: string;
     challenger_id: string;
@@ -207,14 +209,16 @@ export const listMyLadders = createServerFn({ method: "GET" })
       my_rank: number | null;
       my_name: string | null;
       king_name: string | null;
+      me_active: boolean | null;
       player_count: number;
       open_challenges: number;
     }>`
       select l.id, l.name, l.invite_code,
         me.rank as my_rank,
         me.display_name as my_name,
+        me.active as me_active,
         king.display_name as king_name,
-        (select count(*) from ladder_players p where p.ladder_id = l.id) as player_count,
+        (select count(*) from ladder_players p where p.ladder_id = l.id and p.active) as player_count,
         (select count(*) from ladder_challenges c
           where c.ladder_id = l.id and c.status in ('open', 'accepted')) as open_challenges
       from ladders l
@@ -223,7 +227,7 @@ export const listMyLadders = createServerFn({ method: "GET" })
       where l.owner_id = ${context.userId} or me.id is not null
       order by l.created_at desc
     `;
-    const participating = rows.some((row) => row.my_rank != null);
+    const participating = rows.some((row) => row.my_name != null);
     const others = await sql<{ n: number }>`
       select count(*)::int as n
       from ladders l
@@ -238,7 +242,7 @@ export const listMyLadders = createServerFn({ method: "GET" })
         id: row.id,
         name: row.name,
         inviteCode: row.invite_code,
-        myRank: row.my_rank == null ? null : Number(row.my_rank),
+        myRank: row.me_active && row.my_rank != null ? Number(row.my_rank) : null,
         myName: row.my_name,
         kingName: row.king_name,
         playerCount: Number(row.player_count),
@@ -250,7 +254,7 @@ export const listMyLadders = createServerFn({ method: "GET" })
 
 export const homeFeed = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
-  .handler(async ({ context }): Promise<{ challenges: HomeChallenge[]; matches: HomeMatch[] }> => {
+  .handler(async ({ context }): Promise<{ challenges: HomeChallenge[]; matches: HomeMatch[]; monthWins: { label: string; value: number; text: string }[] }> => {
     const sql = await db();
     const challenges = await sql<{
       id: string;
@@ -307,6 +311,26 @@ export const homeFeed = createServerFn({ method: "GET" })
       order by m.played_at desc
       limit 4
     `;
+    const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const monthMatches = await sql<{
+      winner_name: string;
+      loser_name: string;
+      winner_score: number;
+      loser_score: number;
+      played_at: unknown;
+    }>`
+      select m.winner_name, m.loser_name, m.winner_score, m.loser_score, m.played_at
+      from ladder_matches m
+      join ladders l on l.id = m.ladder_id
+      where m.played_at >= ${since}
+        and (
+          l.owner_id = ${context.userId}
+          or exists (
+            select 1 from ladder_players p
+            where p.ladder_id = l.id and p.user_id = ${context.userId}
+          )
+        )
+    `;
     return {
       challenges: challenges.map((row) => ({
         id: row.id,
@@ -332,6 +356,15 @@ export const homeFeed = createServerFn({ method: "GET" })
         stipAwarded: Boolean(row.stip_awarded),
         playedAt: iso(row.played_at),
       })),
+      monthWins: monthWinShare(
+        monthMatches.map((row) => ({
+          winnerName: row.winner_name,
+          loserName: row.loser_name,
+          winnerScore: Number(row.winner_score),
+          loserScore: Number(row.loser_score),
+          playedAt: iso(row.played_at),
+        })),
+      ),
     };
   });
 
@@ -396,15 +429,41 @@ export const createLadder = createServerFn({ method: "POST" })
     return { id: ladderId };
   });
 
+export const peekInvite = createServerFn({ method: "GET" })
+  .validator((input: string | { code?: string; playerId?: string }) => {
+    const raw = typeof input === "string" ? input : input?.code;
+    const playerId = typeof input === "string" ? "" : String(input?.playerId ?? "").trim();
+    if (playerId.length > 80) throw new Error("Briefje niet gevonden.");
+    return { code: normalizeInviteCode(raw ?? ""), playerId };
+  })
+  .handler(async ({ data }): Promise<
+    | { found: false }
+    | { found: true; name: string; seat: { id: string; name: string; claimed: boolean } | null }
+  > => {
+    const { assertSameSiteRequest } = await import("@/lib/auth/isolation.server");
+    assertSameSiteRequest();
+    const sql = await db();
+    const ladders = await sql<{ id: string; name: string }>`
+      select id, name from ladders where invite_code = ${data.code}
+    `;
+    const ladder = ladders[0];
+    if (!ladder) return { found: false };
+    if (!data.playerId) return { found: true, name: ladder.name, seat: null };
+    const seats = await sql<{ id: string; display_name: string; user_id: string | null }>`
+      select id, display_name, user_id from ladder_players
+      where id = ${data.playerId} and ladder_id = ${ladder.id}
+    `;
+    const seat = seats[0];
+    return {
+      found: true,
+      name: ladder.name,
+      seat: seat ? { id: seat.id, name: seat.display_name, claimed: Boolean(seat.user_id) } : null,
+    };
+  });
+
 export const previewInvite = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((code: string) => {
-    const clean = String(code ?? "")
-      .trim()
-      .toUpperCase();
-    if (!/^[A-Z0-9]{4,8}$/.test(clean)) throw new Error("Die code klopt niet.");
-    return clean;
-  })
+  .validator((code: string) => normalizeInviteCode(code))
   .handler(async ({ context, data: code }): Promise<InvitePreview> => {
     const sql = await db();
     const ladders = await sql<{ id: string; name: string }>`
@@ -432,10 +491,7 @@ export const previewInvite = createServerFn({ method: "POST" })
 export const joinLadder = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { code: string; playerId: string | null; name: string }) => {
-    const code = String(input?.code ?? "")
-      .trim()
-      .toUpperCase();
-    if (!/^[A-Z0-9]{4,8}$/.test(code)) throw new Error("Die code klopt niet.");
+    const code = normalizeInviteCode(input?.code ?? "");
     const playerId = input?.playerId ? String(input.playerId) : null;
     const name = playerId ? "" : cleanName(input?.name ?? "");
     return { code, playerId, name };
@@ -459,7 +515,7 @@ export const joinLadder = createServerFn({ method: "POST" })
       return { id: ladder.id };
     }
     const counts = await sql<{ max_rank: number | null }>`
-      select max(rank) as max_rank from ladder_players where ladder_id = ${ladder.id}
+      select max(rank) as max_rank from ladder_players where ladder_id = ${ladder.id} and active
     `;
     const rank = Number(counts[0]?.max_rank ?? 0) + 1;
     await sql`
@@ -515,6 +571,22 @@ export const setNotifyEmail = createServerFn({ method: "POST" })
     const access = await requireLadder(sql, context.userId, data.ladderId);
     if (!access.meId) throw new Error("Koppel eerst je naam aan de ladder.");
     await sql`update ladder_players set notify_email = ${data.email} where id = ${access.meId}`;
+    return { ok: true };
+  });
+
+export const setNoteColor = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; color?: string }) => {
+    if (!input?.ladderId) throw new Error("Ladder ontbreekt.");
+    const color = asNoteColor(String(input.color ?? ""));
+    if (!NOTE_COLORS.includes(color) || color !== input.color) throw new Error("Die kleur kennen we niet.");
+    return { ladderId: String(input.ladderId), color };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    const access = await requireLadder(sql, context.userId, data.ladderId);
+    if (!access.meId) throw new Error("Koppel eerst je naam aan de ladder.");
+    await sql`update ladder_players set note_color = ${data.color} where id = ${access.meId}`;
     return { ok: true };
   });
 
@@ -770,22 +842,139 @@ export const removeLadderPlayer = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await db();
     await requireLadder(sql, context.userId, data.ladderId);
-    const players = await loadPlayers(sql, data.ladderId);
+    const players = await loadPlayers(sql, data.ladderId, true);
     const actor = players.find((player) => player.userId === context.userId);
     if (!isPyramidAdmin(actor)) throw new Error("Alleen Bart van der Poel haalt iemand van de ladder.");
-    if (players.length <= 1) throw new Error("De laatste speler blijft op de ladder.");
-    const me = players.find((player) => player.id === data.playerId);
+    const wall = players.filter(isOnWall);
+    if (wall.length <= 1) throw new Error("De laatste speler blijft op de ladder.");
+    const me = wall.find((player) => player.id === data.playerId);
     if (!me) throw new Error("Speler niet gevonden.");
-    await sql`delete from ladder_players where id = ${me.id} and ladder_id = ${data.ladderId}`;
+    const next = parkPlayer(players, me.id);
+    await writeRoster(sql, data.ladderId, next);
     await sql`
-      update ladder_players set rank = rank + 1000
-      where ladder_id = ${data.ladderId} and rank > ${me.rank}
-    `;
-    await sql`
-      update ladder_players set rank = rank - 1001
-      where ladder_id = ${data.ladderId} and rank > 1000
+      update ladder_challenges set status = 'cancelled'
+      where ladder_id = ${data.ladderId}
+        and status in ('open', 'accepted')
+        and (challenger_id = ${me.id} or defender_id = ${me.id})
     `;
     return { ok: true };
+  });
+
+export const restoreLadderPlayer = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; playerId: string }) => {
+    if (!input?.ladderId || !input.playerId) throw new Error("Speler ontbreekt.");
+    return input;
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    await requireLadder(sql, context.userId, data.ladderId);
+    const players = await loadPlayers(sql, data.ladderId, true);
+    const actor = players.find((player) => player.userId === context.userId);
+    if (!isPyramidAdmin(actor)) throw new Error("Alleen Bart van der Poel zet een briefje terug.");
+    const me = players.find((player) => player.id === data.playerId);
+    if (!me || isOnWall(me)) throw new Error("Dit briefje hangt al.");
+    const bottom = Math.max(0, ...players.filter(isOnWall).map((player) => player.rank));
+    await sql`
+      update ladder_players set active = true, rank = ${bottom + 1}
+      where id = ${me.id} and ladder_id = ${data.ladderId}
+    `;
+    return { ok: true };
+  });
+
+async function writeRoster(sql: Sql, ladderId: string, players: Player[]) {
+  for (const player of players) {
+    await sql`update ladder_players set rank = ${-100000 - player.rank} where id = ${player.id} and ladder_id = ${ladderId}`;
+  }
+  for (const player of players) {
+    await sql`
+      update ladder_players
+      set rank = ${player.rank}, active = ${player.active !== false}, stippen = ${player.stippen}
+      where id = ${player.id} and ladder_id = ${ladderId}
+    `;
+  }
+}
+
+export const editResult = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; matchId: string; winnerScore: number; loserScore: number; note?: string }) => {
+    if (!input?.ladderId || !input.matchId) throw new Error("Uitslag ontbreekt.");
+    const winnerScore = Number(input.winnerScore);
+    const loserScore = Number(input.loserScore);
+    if (!Number.isInteger(winnerScore) || !Number.isInteger(loserScore)) throw new Error("Vul hele punten in.");
+    return {
+      ladderId: String(input.ladderId),
+      matchId: String(input.matchId),
+      winnerScore,
+      loserScore,
+      note: String(input.note ?? "").slice(0, 140),
+    };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    await requireLadder(sql, context.userId, data.ladderId);
+    const rows = await sql<{
+      id: string;
+      winner_id: string | null;
+      loser_id: string | null;
+      winner_score: number;
+      loser_score: number;
+      swapped: boolean;
+      stip_awarded: boolean;
+    }>`
+      select id, winner_id, loser_id, winner_score, loser_score, swapped, stip_awarded
+      from ladder_matches
+      where id = ${data.matchId} and ladder_id = ${data.ladderId}
+    `;
+    const match = rows[0];
+    if (!match) throw new Error("Uitslag niet gevonden.");
+    const players = await loadPlayers(sql, data.ladderId, true);
+    const actor = players.find((player) => player.userId === context.userId);
+    const played = actor && (actor.id === match.winner_id || actor.id === match.loser_id);
+    if (!played && !isPyramidAdmin(actor)) throw new Error("Alleen de spelers of Bart kunnen deze score wijzigen.");
+    const unchanged = sameOutcome(Number(match.winner_score), Number(match.loser_score), data.winnerScore, data.loserScore);
+    if (unchanged) {
+      await sql`
+        update ladder_matches
+        set winner_score = ${data.winnerScore}, loser_score = ${data.loserScore}, note = ${data.note}
+        where id = ${match.id}
+      `;
+      const winner = players.find((player) => player.id === match.winner_id);
+      return { swapped: false, stipAwarded: false, draw: data.winnerScore === data.loserScore, winnerName: winner?.name ?? "" };
+    }
+    const settled = reviseMatch(
+      players,
+      {
+        winnerId: match.winner_id,
+        loserId: match.loser_id,
+        swapped: Boolean(match.swapped),
+        stipAwarded: Boolean(match.stip_awarded),
+      },
+      data.winnerScore,
+      data.loserScore,
+    );
+    await writeRoster(sql, data.ladderId, settled.players);
+    await sql`
+      update ladder_matches set
+        winner_id = ${settled.winnerId},
+        loser_id = ${settled.loserId},
+        winner_name = ${settled.winnerName},
+        loser_name = ${settled.loserName},
+        winner_score = ${settled.winnerScore},
+        loser_score = ${settled.loserScore},
+        winner_rank_before = ${settled.winnerRankBefore},
+        loser_rank_before = ${settled.loserRankBefore},
+        swapped = ${settled.swapped},
+        stip_awarded = ${settled.stipAwarded},
+        note = ${data.note}
+      where id = ${match.id}
+    `;
+    return {
+      swapped: settled.swapped,
+      stipAwarded: settled.stipAwarded,
+      draw: settled.draw,
+      winnerName: settled.winnerName,
+    };
   });
 
 export const renameMe = createServerFn({ method: "POST" })
@@ -833,7 +1022,7 @@ export const addLadderPlayer = createServerFn({ method: "POST" })
     `;
     if (dupes[0]) throw new Error("Die naam staat al op de ladder.");
     const counts = await sql<{ max_rank: number | null }>`
-      select max(rank) as max_rank from ladder_players where ladder_id = ${data.ladderId}
+      select max(rank) as max_rank from ladder_players where ladder_id = ${data.ladderId} and active
     `;
     const rank = Number(counts[0]?.max_rank ?? 0) + 1;
     await sql`

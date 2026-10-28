@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, removePlayer, settleMatch } from "./rules.ts";
+import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
 function player(id: string, rank: number): Player {
@@ -91,5 +91,26 @@ describe("piramide rules", () => {
         ["d", 5],
       ],
     );
+  });
+
+  it("parks a note without dropping the player, and puts it back at the bottom", () => {
+    const signed = { ...player("b", 2), userId: "user-b" };
+    const wall = [player("a", 1), signed, player("c", 3)];
+    const parked = parkPlayer(wall, "b");
+    const aside = parked.find((item) => item.id === "b");
+    assert.equal(aside?.active, false);
+    assert.equal(aside?.userId, "user-b");
+    assert.deepEqual(
+      parked.filter((item) => item.active !== false).map((item) => [item.id, item.rank]),
+      [
+        ["a", 1],
+        ["c", 2],
+      ],
+    );
+    const back = restorePlayer(parked, "b");
+    assert.equal(back.find((item) => item.id === "b")?.active, true);
+    assert.equal(back.find((item) => item.id === "b")?.rank, 3);
+    assert.equal(sameOutcome(2, 0, 3, 1), true);
+    assert.equal(sameOutcome(2, 0, 1, 2), false);
   });
 });

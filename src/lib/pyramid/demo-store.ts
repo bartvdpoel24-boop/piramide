@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, removePlayer, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleMatch } from "./rules";
 import { cleanEmail } from "./email";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
-import { CHALLENGE_RANGE, type SettleResult, type Slot } from "./types";
+import { CHALLENGE_RANGE, type NoteColor, type SettleResult, type Slot } from "./types";
 
 type DemoActions = {
   setPersona: (id: string) => void;
@@ -27,9 +27,12 @@ type DemoActions = {
   }) => SettleResult;
   nudge: (playerId: string, direction: -1 | 1) => void;
   remove: (playerId: string) => void;
+  restore: (playerId: string) => void;
+  revise: (matchId: string, winnerScore: number, loserScore: number, note: string) => SettleResult;
   add: (name: string) => void;
   rename: (name: string) => void;
   setEmail: (email: string) => void;
+  setNote: (color: NoteColor) => void;
 };
 
 export const useDemoStore = create<DemoState & DemoActions>()(
@@ -137,19 +140,71 @@ export const useDemoStore = create<DemoState & DemoActions>()(
       remove: (playerId) => {
         const persona = get().players.find((player) => player.id === get().personaId);
         if (!isPyramidAdmin(persona)) throw new Error("Alleen Bart van der Poel haalt iemand van de ladder.");
-        const players = removePlayer(get().players, playerId);
-        const personaId = players.some((player) => player.id === get().personaId)
-          ? get().personaId
-          : (players[0]?.id ?? get().personaId);
+        const players = parkPlayer(get().players, playerId);
         set({
           players,
-          personaId,
           challenges: get().challenges.map((item) =>
-            item.challengerId === playerId || item.defenderId === playerId
-              ? { ...item, status: item.status === "played" ? "played" : "cancelled" }
+            (item.challengerId === playerId || item.defenderId === playerId) && item.status !== "played"
+              ? { ...item, status: "cancelled" }
               : item,
           ),
         });
+      },
+      restore: (playerId) => {
+        const persona = get().players.find((player) => player.id === get().personaId);
+        if (!isPyramidAdmin(persona)) throw new Error("Alleen Bart van der Poel zet een briefje terug.");
+        set({ players: restorePlayer(get().players, playerId) });
+      },
+      revise: (matchId, winnerScore, loserScore, note) => {
+        const persona = get().players.find((player) => player.id === get().personaId);
+        const match = get().matches.find((item) => item.id === matchId);
+        if (!match) throw new Error("Uitslag niet gevonden.");
+        const played = match.winnerId === get().personaId || match.loserId === get().personaId;
+        if (!played && !isPyramidAdmin(persona)) throw new Error("Alleen de spelers of Bart kunnen deze score wijzigen.");
+        if (sameOutcome(match.winnerScore, match.loserScore, winnerScore, loserScore)) {
+          set({
+            matches: get().matches.map((item) =>
+              item.id === matchId ? { ...item, winnerScore, loserScore, note: note.slice(0, 140) } : item,
+            ),
+          });
+          return {
+            winnerId: match.winnerId ?? "",
+            loserId: match.loserId ?? "",
+            winnerName: match.winnerName,
+            loserName: match.loserName,
+            winnerScore,
+            loserScore,
+            winnerRankBefore: match.winnerRankBefore,
+            loserRankBefore: match.loserRankBefore,
+            swapped: false,
+            stipAwarded: false,
+            draw: winnerScore === loserScore,
+            players: get().players,
+          };
+        }
+        const settled = reviseMatch(get().players, match, winnerScore, loserScore);
+        set({
+          players: settled.players,
+          matches: get().matches.map((item) =>
+            item.id === matchId
+              ? {
+                  ...item,
+                  winnerId: settled.winnerId,
+                  loserId: settled.loserId,
+                  winnerName: settled.winnerName,
+                  loserName: settled.loserName,
+                  winnerScore: settled.winnerScore,
+                  loserScore: settled.loserScore,
+                  winnerRankBefore: settled.winnerRankBefore,
+                  loserRankBefore: settled.loserRankBefore,
+                  swapped: settled.swapped,
+                  stipAwarded: settled.stipAwarded,
+                  note: note.slice(0, 140),
+                }
+              : item,
+          ),
+        });
+        return settled;
       },
       add: (name) => {
         const clean = cleanName(name);
@@ -190,6 +245,13 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         if (!players.some((player) => player.id === personaId)) throw new Error("Speler niet gevonden.");
         set({
           players: players.map((player) => (player.id === personaId ? { ...player, email: clean } : player)),
+        });
+      },
+      setNote: (color) => {
+        const { players, personaId } = get();
+        if (!players.some((player) => player.id === personaId)) throw new Error("Speler niet gevonden.");
+        set({
+          players: players.map((player) => (player.id === personaId ? { ...player, note: color } : player)),
         });
       },
     }),

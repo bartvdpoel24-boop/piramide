@@ -6,12 +6,14 @@ import { toast } from "sonner";
 import { authEnabled, GROK_PROVIDERS, signIn, signOut } from "@/lib/auth/client";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { getLadder, listMyLadders, renameMe, setAvailability, setNotifyEmail } from "@/lib/pyramid/api";
+import { getLadder, listMyLadders, renameMe, setAvailability, setNoteColor, setNotifyEmail } from "@/lib/pyramid/api";
+import { cn } from "@/lib/cn";
+import { NOTE_BG, NOTE_LABEL } from "@/lib/pyramid/notes";
+import { NOTE_COLORS, type NoteColor, type Player, type Slot } from "@/lib/pyramid/types";
 import { pyramidStats } from "@/lib/pyramid/stats";
 import { StatsPanel } from "./stats-panel";
-import { feedbackStatus, saveFeedbackToken } from "@/lib/pyramid/feedback";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
-import type { LadderSummary, Player, Slot } from "@/lib/pyramid/types";
+import type { LadderSummary } from "@/lib/pyramid/types";
 import { AvailabilityForm } from "./availability-form";
 import { CreateForm } from "./create-form";
 
@@ -151,7 +153,7 @@ function InfoBody() {
     ["Wisselen", "Win je van iemand boven je, dan wisselen jullie van plek. De rest blijft hangen."],
     ["Gelijkspel", "Bij een gelijkspel verandert er niets."],
     ["Stippen", "Houdt de nummer 1 stand, dan komt er een stip bij op de troon."],
-    ["Deelnemen", "Met de code koppel je je naam aan een briefje. Aangemeld blijft staan, ook als je op dat moment niet ingelogd bent."],
+    ["Deelnemen", "Deel de link, bijvoorbeeld via WhatsApp. De ontvanger opent hem, logt in en koppelt een naam. Met de code kan dat ook."],
     ["Tijden", "Zet wanneer je kunt spelen. Meerdere tijden op dezelfde dag mag."],
     ["Accepteren", "Alleen degene die uitgedaagd is, kan de uitdaging aannemen of afwijzen."],
   ];
@@ -244,21 +246,9 @@ function SettingsBody({
   ladderId: string | null;
   signedIn: boolean;
 }) {
-  if (demo) {
-    return (
-      <>
-        <DemoSettings />
-        {signedIn ? <FeedbackSettings /> : null}
-      </>
-    );
-  }
+  if (demo) return <DemoSettings />;
   if (!signedIn) return <SignedOutNote />;
-  return (
-    <>
-      <LiveSettings ladderId={ladderId} />
-      <FeedbackSettings />
-    </>
-  );
+  return <LiveSettings ladderId={ladderId} />;
 }
 
 function DemoSettings() {
@@ -271,6 +261,7 @@ function DemoSettings() {
       player={me}
       onRename={(name) => useDemoStore.getState().rename(name)}
       onEmail={(email) => useDemoStore.getState().setEmail(email)}
+      onColor={(color) => useDemoStore.getState().setNote(color)}
       onAvailability={(slots) => useDemoStore.getState().setAvailability(slots)}
     />
   );
@@ -342,7 +333,7 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
       ) : null}
       {player ? (
         <PlayerSettings
-          key={`${player.id}:${player.name}:${player.email ?? ""}:${player.availability.map((slot) => `${slot.day}-${slot.startMin}`).join(",")}`}
+          key={`${player.id}:${player.name}:${player.note}:${player.email ?? ""}:${player.availability.map((slot) => `${slot.day}-${slot.startMin}`).join(",")}`}
           player={player}
           onRename={async (name) => {
             await renameMe({ data: { ladderId: activeId, name } });
@@ -352,6 +343,11 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
           onEmail={async (email) => {
             await setNotifyEmail({ data: { ladderId: activeId, email } });
             setPlayer({ ...player, email });
+          }}
+          onColor={async (color) => {
+            await setNoteColor({ data: { ladderId: activeId, color } });
+            setPlayer({ ...player, note: color });
+            window.dispatchEvent(new Event("piramide-refresh"));
           }}
           onAvailability={async (slots) => {
             await setAvailability({ data: { ladderId: activeId, slots } });
@@ -374,11 +370,13 @@ function PlayerSettings({
   player,
   onRename,
   onEmail,
+  onColor,
   onAvailability,
 }: {
   player: Player;
   onRename: (name: string) => void | Promise<void>;
   onEmail: (email: string) => void | Promise<void>;
+  onColor: (color: NoteColor) => void | Promise<void>;
   onAvailability: (slots: Slot[]) => void | Promise<void>;
 }) {
   const [name, setName] = useState(player.name);
@@ -439,6 +437,31 @@ function PlayerSettings({
         </button>
       </form>
       <div className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Kleur van je briefje</h2>
+        <div className="flex flex-wrap gap-2">
+          {NOTE_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              aria-label={NOTE_LABEL[color]}
+              aria-pressed={player.note === color}
+              title={NOTE_LABEL[color]}
+              className={cn(
+                "size-11 rounded-md ring-2 ring-offset-2 ring-offset-felt",
+                player.note === color ? "ring-brass" : "ring-transparent",
+              )}
+              style={{ background: NOTE_BG[color] }}
+              onClick={() => {
+                if (color === player.note) return;
+                Promise.resolve(onColor(color))
+                  .then(() => toast.success("Kleur gewijzigd."))
+                  .catch((reason: unknown) => toast.error(errorText(reason)));
+              }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
         <h2 className="font-display text-2xl italic">Beschikbaarheid</h2>
         <AvailabilityForm
           player={player}
@@ -450,80 +473,5 @@ function PlayerSettings({
         />
       </div>
     </div>
-  );
-}
-
-function FeedbackSettings() {
-  const [ready, setReady] = useState<boolean | null>(null);
-  const [canConfigure, setCanConfigure] = useState(false);
-  const [token, setToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    feedbackStatus()
-      .then((status) => {
-        if (!active) return;
-        setReady(status.ready);
-        setCanConfigure(status.canConfigure);
-      })
-      .catch(() => {
-        if (active) setReady(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  if (ready == null) return <div className="panel h-16 animate-pulse" />;
-  if (!canConfigure && ready) return null;
-
-  return (
-    <form
-      className="flex flex-col gap-2 border-t border-line pt-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        setBusy(true);
-        setError(null);
-        saveFeedbackToken({ data: { token } })
-          .then(() => {
-            setReady(true);
-            setToken("");
-            toast.success("Meldingen staan aan.");
-          })
-          .catch((reason: unknown) => setError(errorText(reason)))
-          .finally(() => setBusy(false));
-      }}
-    >
-      <h2 className="font-display text-2xl italic">Meldingen</h2>
-      <p className="text-sm text-ivory-dim">
-        {ready
-          ? "Een melding via Geef feedback wordt een GitHub-issue."
-          : "Nog uit. Plak een GitHub-token met schrijfrecht op issues van de piramide-repo."}
-      </p>
-      {canConfigure ? (
-        <>
-          <label className="flex flex-col gap-1 text-sm">
-            GitHub-token
-            <input
-              className="field"
-              type="password"
-              value={token}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder={ready ? "Token vervangen" : "ghp_… of github_pat_…"}
-            />
-          </label>
-          {error ? <p className="text-sm text-brass">{error}</p> : null}
-          <button type="submit" className="btn btn-brass self-start" disabled={busy || token.trim().length < 20}>
-            {busy ? "Bezig…" : ready ? "Token vervangen" : "Meldingen aanzetten"}
-          </button>
-        </>
-      ) : (
-        <p className="text-sm text-ivory-dim">Alleen Bart kan dit aanzetten.</p>
-      )}
-    </form>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { MessageSquarePlus } from "lucide-react";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { submitFeedback } from "@/lib/pyramid/feedback";
+import { feedbackIssue, submitFeedback } from "@/lib/pyramid/feedback";
 import { cn } from "@/lib/cn";
 
 const KINDS = [
@@ -13,15 +13,6 @@ const KINDS = [
 
 type Kind = (typeof KINDS)[number]["id"];
 
-function errorText(error: unknown) {
-  if (error instanceof Error && error.message === "Unauthorized") {
-    return "Log in met Google. Dan komt de melding direct op GitHub.";
-  }
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
-  return "De melding kon niet geplaatst worden.";
-}
-
 export function FeedbackButton({ place }: { place?: string }) {
   const { user } = useCurrentUserState();
   const [open, setOpen] = useState(false);
@@ -29,7 +20,6 @@ export function FeedbackButton({ place }: { place?: string }) {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [created, setCreated] = useState<{ number: number; url: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const signedIn = user && !user.isDevFallback ? user : null;
   const [who, setWho] = useState("");
@@ -45,7 +35,6 @@ export function FeedbackButton({ place }: { place?: string }) {
     setTitle("");
     setMessage("");
     setCreated(null);
-    setError(null);
     setPending(false);
     setWho(signedIn?.displayName ?? "");
   }
@@ -53,23 +42,26 @@ export function FeedbackButton({ place }: { place?: string }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setPending(true);
-    setError(null);
     const name = who.trim();
     const from = [name, signedIn?.primaryEmail].filter(Boolean).join(" · ");
+    const draft = {
+      kind,
+      title,
+      message,
+      who: from,
+      place: place ?? "",
+      screen: window.location.pathname,
+    };
+    const link = feedbackIssue(draft);
     try {
-      const result = await submitFeedback({
-        data: {
-          kind,
-          title,
-          message,
-          who: from,
-          place,
-          screen: window.location.pathname,
-        },
-      });
-      setCreated(result);
-    } catch (caught) {
-      setError(errorText(caught));
+      if (signedIn) {
+        const result = await submitFeedback({ data: draft });
+        setCreated(result.number > 0 ? result : { number: 0, url: link.url });
+        return;
+      }
+      setCreated({ number: 0, url: link.url });
+    } catch {
+      setCreated({ number: 0, url: link.url });
     } finally {
       setPending(false);
     }
@@ -87,15 +79,21 @@ export function FeedbackButton({ place }: { place?: string }) {
           <Dialog.Content className="sheet">
             <Dialog.Title className="font-display text-3xl italic">Geef feedback</Dialog.Title>
             <Dialog.Description className="mt-1 text-sm text-ink/70">
-              Bug, idee of vraag. Dit wordt meteen een melding in de GitHub-repo van Piramide.
+              Bug, idee of vraag. Dit wordt een melding in de openbare GitHub-repo van Piramide.
             </Dialog.Description>
             {created ? (
               <div className="mt-4 flex flex-col gap-3">
-                <p className="text-sm text-ink/80">
-                  Melding <span className="font-semibold">#{created.number}</span> staat op GitHub.
-                </p>
+                {created.number > 0 ? (
+                  <p className="text-sm text-ink/80">
+                    Melding <span className="font-semibold">#{created.number}</span> staat op GitHub.
+                  </p>
+                ) : (
+                  <p className="text-sm text-ink/80">
+                    De tekst staat klaar. Op GitHub tik je nog een keer op indienen. De repo is openbaar, er is geen token nodig.
+                  </p>
+                )}
                 <a href={created.url} target="_blank" rel="noreferrer" className="btn btn-ink">
-                  Bekijk de melding
+                  {created.number > 0 ? "Bekijk de melding" : "Melding op GitHub plaatsen"}
                 </a>
                 <button type="button" className="btn btn-quiet" onClick={close}>
                   Klaar
@@ -149,7 +147,6 @@ export function FeedbackButton({ place }: { place?: string }) {
                     placeholder="Optioneel"
                   />
                 </label>
-                {error ? <p className="text-sm text-ink">{error}</p> : null}
                 <div className="flex gap-2">
                   <button type="submit" className="btn btn-ink flex-1" disabled={pending}>
                     {pending ? "Bezig…" : "Melding plaatsen"}

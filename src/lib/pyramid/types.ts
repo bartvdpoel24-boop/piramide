@@ -28,6 +28,7 @@ export type Player = {
   userId: string | null;
   email?: string;
   availability: Slot[];
+  active?: boolean;
 };
 
 export type ChallengeStatus = "open" | "accepted" | "declined" | "played" | "cancelled";

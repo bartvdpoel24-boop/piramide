@@ -8,7 +8,9 @@ import {
   getLadder,
   nudgeLadderPlayer,
   recordResult,
+  editResult,
   removeLadderPlayer,
+  restoreLadderPlayer,
   respondChallenge,
   setAvailability,
 } from "@/lib/pyramid/api";
@@ -101,6 +103,11 @@ function LiveLadder() {
         await load();
         return outcome;
       }}
+      onEditResult={async (input) => {
+        const outcome = await editResult({ data: { ladderId: id, ...input } });
+        await load();
+        return outcome;
+      }}
       onAvailability={async (slots) => {
         await setAvailability({ data: { ladderId: id, slots } });
         await load();
@@ -117,6 +124,14 @@ function LiveLadder() {
         data.amOwner
           ? async (playerId) => {
               await removeLadderPlayer({ data: { ladderId: id, playerId } });
+              await load();
+            }
+          : undefined
+      }
+      onRestore={
+        data.amOwner
+          ? async (playerId) => {
+              await restoreLadderPlayer({ data: { ladderId: id, playerId } });
               await load();
             }
           : undefined
