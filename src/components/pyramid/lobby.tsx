@@ -263,6 +263,7 @@ function SignedIn() {
             playedAt: item.playedAt,
             note: "",
             challengeId: null,
+            sides: item.sides,
           }),
           detail: `${item.ladderName} · ${fmtWhen(item.playedAt)}`,
         }))}

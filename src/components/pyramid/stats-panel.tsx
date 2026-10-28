@@ -115,6 +115,10 @@ export function StatsPanel({ stats }: { stats: PyramidStats }) {
         <Bars rows={stats.rates} empty="Nog geen uitslagen." />
       </section>
       <section className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Langste reeksen</h2>
+        <Bars rows={stats.streaks} empty="Nog geen reeks." />
+      </section>
+      <section className="flex flex-col gap-2">
         <h2 className="font-display text-2xl italic">Stippen op de troon</h2>
         <Bars rows={stats.stippen} empty="Nog geen geslaagde verdediging van plek 1." />
       </section>

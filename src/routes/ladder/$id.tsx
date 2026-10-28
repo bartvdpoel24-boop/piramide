@@ -8,6 +8,7 @@ import {
   getLadder,
   nudgeLadderPlayer,
   recordResult,
+  recordGroupResult,
   editResult,
   removeLadderPlayer,
   restoreLadderPlayer,
@@ -100,6 +101,11 @@ function LiveLadder() {
       }}
       onResult={async (input) => {
         const outcome = await recordResult({ data: { ladderId: id, ...input } });
+        await load();
+        return outcome;
+      }}
+      onGroupResult={async (input) => {
+        const outcome = await recordGroupResult({ data: { ladderId: id, ...input } });
         await load();
         return outcome;
       }}

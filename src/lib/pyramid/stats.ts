@@ -11,6 +11,7 @@ export type PyramidStats = {
   winShare: StatRow[];
   rates: StatRow[];
   stippen: StatRow[];
+  streaks: StatRow[];
   played: number;
   rateNote: string;
 };
@@ -68,6 +69,49 @@ export function monthWinShare(
     .map(([label, value]) => ({ label, value, text: String(value) }));
 }
 
+export function currentStreaks(matches: Match[]) {
+  return walkStreaks(matches).current;
+}
+
+function matchOutcomes(match: Match): { id: string; name: string; outcome: "win" | "loss" | "draw" }[] {
+  if (match.sides && match.sides.length > 2) {
+    const best = Math.max(...match.sides.map((side) => side.score));
+    const leaders = match.sides.filter((side) => side.score === best).length;
+    const draw = leaders === match.sides.length;
+    return match.sides
+      .filter((side) => side.id)
+      .map((side) => ({
+        id: side.id,
+        name: side.name,
+        outcome: draw || (side.score === best && leaders > 1) ? "draw" : side.score === best ? "win" : "loss",
+      }));
+  }
+  const draw = match.winnerScore === match.loserScore;
+  return [
+    { id: match.winnerId ?? "", name: match.winnerName, outcome: draw ? "draw" as const : "win" as const },
+    { id: match.loserId ?? "", name: match.loserName, outcome: draw ? "draw" as const : "loss" as const },
+  ].filter((side) => side.id);
+}
+
+function walkStreaks(matches: Match[]) {
+  const ordered = matches
+    .filter((match) => !Number.isNaN(new Date(match.playedAt).getTime()))
+    .sort((a, b) => new Date(a.playedAt).getTime() - new Date(b.playedAt).getTime() || a.id.localeCompare(b.id));
+  const current = new Map<string, number>();
+  const best = new Map<string, { name: string; value: number }>();
+  for (const match of ordered) {
+    for (const side of matchOutcomes(match)) {
+      const now = current.get(side.id) ?? 0;
+      const next = side.outcome === "win" ? now + 1 : side.outcome === "loss" ? 0 : now;
+      current.set(side.id, next);
+      const prev = best.get(side.id);
+      if (!prev || next > prev.value) best.set(side.id, { name: side.name, value: next });
+      else best.set(side.id, { name: side.name, value: prev.value });
+    }
+  }
+  return { current, best };
+}
+
 export function lastResults(matches: Match[]): Map<string, LastResult> {
   const found = new Map<string, { at: number; date: string; line: string }>();
   for (const match of matches) {
@@ -116,6 +160,17 @@ export function pyramidStats(
   for (const match of matches) {
     const key = monthKey(match.playedAt);
     if (key) byMonth.set(key, (byMonth.get(key) ?? 0) + 1);
+    if (match.sides && match.sides.length > 2) {
+      const best = Math.max(...match.sides.map((side) => side.score));
+      const leaders = match.sides.filter((side) => side.score === best).length;
+      for (const side of match.sides) {
+        const row = touch(side.name);
+        if (!row) continue;
+        row.played += 1;
+        if (leaders === 1 && side.score === best) row.wins += 1;
+      }
+      continue;
+    }
     const draw = match.winnerScore === match.loserScore;
     const winner = touch(match.winnerName);
     const loser = touch(match.loserName);
@@ -155,12 +210,19 @@ export function pyramidStats(
     .slice(0, 8)
     .map((player) => ({ label: player.name, value: player.stippen, text: String(player.stippen) }));
 
+  const streaks = [...walkStreaks(matches).best.values()]
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name, "nl"))
+    .slice(0, 3)
+    .map((row) => ({ label: row.name, value: row.value, text: `${row.value} op rij` }));
+
   return {
     months,
     wins,
     winShare,
     rates,
     stippen,
+    streaks,
     played: matches.length,
     rateNote: seasoned.length > 0 ? "Alleen wie minstens 3 partijen speelde." : "Nog te weinig partijen voor een eerlijke vergelijking.",
   };

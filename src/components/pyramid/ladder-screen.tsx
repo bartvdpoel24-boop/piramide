@@ -12,9 +12,9 @@ import {
   matchSummary,
   todayDayIndex,
 } from "@/lib/pyramid/format";
-import { canChallengeUp, canInviteDown, isOnWall, isPyramidAdmin, legalDistance, overlapSlots, pyramidRows, reviseMatch, sameOutcome, settleMatch } from "@/lib/pyramid/rules";
+import { canChallengeUp, canInviteDown, isOnWall, isPyramidAdmin, legalDistance, overlapSlots, pyramidRows, reviseMatch, sameOutcome, settleGroup, settleMatch } from "@/lib/pyramid/rules";
 import { NOTE_BG } from "@/lib/pyramid/notes";
-import { lastResults, type LastResult } from "@/lib/pyramid/stats";
+import { currentStreaks, lastResults, type LastResult } from "@/lib/pyramid/stats";
 import { joinMessage, joinUrl, seatMessage, whatsAppHref } from "@/lib/pyramid/share";
 import type { Challenge, Match, Player, Slot } from "@/lib/pyramid/types";
 import { cn } from "@/lib/cn";
@@ -53,6 +53,12 @@ export type LadderActions = {
     note: string;
     challengeId: string | null;
   }) => Promise<{ swapped: boolean; stipAwarded: boolean; draw: boolean; winnerName: string }>;
+  onGroupResult?: (input: { sides: { id: string; score: number }[]; note: string }) => Promise<{
+    swapped: boolean;
+    stipAwarded: boolean;
+    draw: boolean;
+    winnerName: string;
+  }>;
   onAvailability: (slots: Slot[]) => Promise<void>;
   onNudge?: (playerId: string, direction: -1 | 1) => Promise<void>;
   onRemove?: (playerId: string) => Promise<void>;
@@ -104,11 +110,13 @@ export function LadderScreen(props: Props) {
   const [approach, setApproach] = useState<{ id: string; kind: "challenge" | "invite" } | null>(null);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
   const [pendingRemove, setPendingRemove] = useState<Player | null>(null);
+  const [groupOpen, setGroupOpen] = useState(false);
   const [onlyJoined, setOnlyJoined] = useState(false);
   const joined = useMemo(() => wall.filter((player) => player.userId), [wall]);
   const visible = onlyJoined ? joined : wall;
   const rows = useMemo(() => pyramidRows(visible), [visible]);
   const latest = useMemo(() => lastResults(matches), [matches]);
+  const streaks = useMemo(() => currentStreaks(matches), [matches]);
   const selected = wall.find((player) => player.id === selectedId) ?? null;
   const active = challenges.filter((item) => item.status === "open" || item.status === "accepted");
   const today = todayDayIndex();
@@ -241,6 +249,7 @@ export function LadderScreen(props: Props) {
             selectedId={selectedId}
             meId={meId}
             latest={latest}
+            streaks={streaks}
             onSelect={setSelectedId}
           />
 
@@ -284,29 +293,38 @@ export function LadderScreen(props: Props) {
       ) : null}
 
       {tab === "uitslagen" ? (
-        <MatchList
-          matches={matches}
-          onEdit={
-            props.onEditResult
-              ? (match) => {
-                  if (!match.winnerId || !match.loserId) return;
-                  setResultDraft({
-                    leftId: match.winnerId,
-                    rightId: match.loserId,
-                    challengeId: null,
-                    lockPair: true,
-                    matchId: match.id,
-                    leftScore: match.winnerScore,
-                    rightScore: match.loserScore,
-                    note: match.note,
-                    swapped: match.swapped,
-                    stipAwarded: match.stipAwarded,
-                  });
-                }
-              : undefined
-          }
-          canEdit={(match) => match.winnerId === meId || match.loserId === meId || isPyramidAdmin(me)}
-        />
+        <div className="flex flex-col gap-3">
+          {props.onGroupResult ? (
+            <button type="button" className="btn btn-brass self-start" onClick={() => setGroupOpen(true)}>
+              Nieuwe uitslag
+            </button>
+          ) : null}
+          <MatchList
+            matches={matches}
+            onEdit={
+              props.onEditResult
+                ? (match) => {
+                    if (!match.winnerId || !match.loserId || (match.sides?.length ?? 0) > 2) return;
+                    setResultDraft({
+                      leftId: match.winnerId,
+                      rightId: match.loserId,
+                      challengeId: null,
+                      lockPair: true,
+                      matchId: match.id,
+                      leftScore: match.winnerScore,
+                      rightScore: match.loserScore,
+                      note: match.note,
+                      swapped: match.swapped,
+                      stipAwarded: match.stipAwarded,
+                    });
+                  }
+                : undefined
+            }
+            canEdit={(match) =>
+              (match.sides?.length ?? 0) <= 2 && (match.winnerId === meId || match.loserId === meId || isPyramidAdmin(me))
+            }
+          />
+        </div>
       ) : null}
 
       {tab === "tijden" ? (
@@ -365,6 +383,29 @@ export function LadderScreen(props: Props) {
             );
           })
         }
+      />
+
+      <GroupResultDialog
+        open={groupOpen}
+        players={wall}
+        mustPlay={props.amOwner || isPyramidAdmin(me) ? null : meId}
+        onClose={() => setGroupOpen(false)}
+        onSubmit={(input) => {
+          if (!props.onGroupResult) return;
+          setGroupOpen(false);
+          void run(async () => {
+            const outcome = await props.onGroupResult!(input);
+            toast.success(
+              outcome.draw
+                ? "Gelijkspel. De briefjes blijven hangen."
+                : outcome.stipAwarded
+                  ? `${outcome.winnerName} verdedigt de troon. +1 stip.`
+                  : outcome.swapped
+                    ? "De plekken van de partij zijn aangepast. Briefjes ertussen blijven hangen."
+                    : "De piramide blijft staan.",
+            );
+          });
+        }}
       />
 
       <ResultDialog
@@ -434,6 +475,7 @@ function PyramidBoard({
   selectedId,
   meId,
   latest,
+  streaks,
   onSelect,
 }: {
   rows: Player[][];
@@ -441,6 +483,7 @@ function PyramidBoard({
   selectedId: string | null;
   meId: string | null;
   latest: Map<string, LastResult>;
+  streaks: Map<string, number>;
   onSelect: (id: string) => void;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
@@ -611,6 +654,9 @@ function PyramidBoard({
                     >
                       <span className="text-xs tabular-nums opacity-70">#{player.rank}</span>
                       <span className="font-display line-clamp-3 text-base leading-tight italic">{player.name}</span>
+                      {(streaks.get(player.id) ?? 0) > 0 ? (
+                        <span className="mt-1 text-xs font-semibold text-brass-deep">{streaks.get(player.id)} op rij</span>
+                      ) : null}
                       {player.rank === 1 ? <Crown className="mt-1 size-4 text-brass-deep" /> : null}
                       {player.stippen > 0 ? (
                         <span className="mt-1 flex items-center gap-1" title={`${player.stippen} stippen`}>
@@ -1383,6 +1429,134 @@ function ResultDialog({
               }
             >
               {editing ? "Score bijwerken" : "Vastleggen"}
+            </button>
+            <Dialog.Close type="button" className="btn btn-quiet">
+              Terug
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function GroupResultDialog({
+  open,
+  players,
+  mustPlay,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  players: Player[];
+  mustPlay: string | null;
+  onClose: () => void;
+  onSubmit: (input: { sides: { id: string; score: number }[]; note: string }) => void;
+}) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [scores, setScores] = useState<Record<string, number>>({});
+  const [note, setNote] = useState("");
+  const wall = players.filter(isOnWall).sort((a, b) => a.rank - b.rank);
+
+  useEffect(() => {
+    if (!open) return;
+    setPicked([]);
+    setScores({});
+    setNote("");
+  }, [open]);
+  const sides = picked.map((id) => ({ id, score: scores[id] ?? 0 }));
+  const missingSelf = Boolean(mustPlay && !picked.includes(mustPlay));
+  const preview = useMemo(() => {
+    if (sides.length < 2) return null;
+    try {
+      return settleGroup(players, sides);
+    } catch {
+      return null;
+    }
+  }, [players, picked, scores]);
+
+  function toggle(id: string) {
+    setPicked((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+    setScores((current) => ({ ...current, [id]: current[id] ?? 0 }));
+  }
+
+  const moved = preview?.places.filter((place) => place.rankBefore !== place.rankAfter) ?? [];
+  const hint = !preview
+    ? "Kies iedereen die meedeed, minstens twee."
+    : missingSelf
+      ? "Je moet zelf meedoen, of beheerder zijn."
+      : preview.draw
+        ? "Gelijkspel. De briefjes blijven hangen."
+        : moved.length === 0
+          ? "De piramide blijft staan."
+          : `${moved.map((place) => `${place.name} naar plek ${place.rankAfter}`).join(", ")}. Briefjes ertussen blijven hangen.`;
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-felt-deep/80" />
+        <Dialog.Content className="sheet">
+          <Dialog.Title className="font-display text-3xl italic">Nieuwe uitslag</Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm text-ink/70">
+            Meerdere spelers mogen meedoen. De hoogste score pakt de hoogste plek van de groep. Briefjes ertussen blijven
+            hangen.
+          </Dialog.Description>
+          <ul className="mt-4 flex max-h-72 flex-col gap-2 overflow-y-auto">
+            {wall.map((player) => {
+              const on = picked.includes(player.id);
+              return (
+                <li key={player.id} className="flex items-center gap-3">
+                  <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                    <input type="checkbox" checked={on} onChange={() => toggle(player.id)} />
+                    <span className="truncate">
+                      {player.rank}. {player.name}
+                    </span>
+                  </label>
+                  {on ? (
+                    <input
+                      type="number"
+                      min={0}
+                      max={15}
+                      inputMode="numeric"
+                      aria-label={`Score van ${player.name}`}
+                      className="field-ink w-16 text-center"
+                      value={scores[player.id] ?? 0}
+                      onChange={(event) =>
+                        setScores((current) => ({
+                          ...current,
+                          [player.id]: Math.max(0, Math.min(15, Number(event.target.value) || 0)),
+                        }))
+                      }
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-3 text-sm text-ink/80">{hint}</p>
+          <label className="mt-3 flex flex-col gap-1 text-sm">
+            Notitie
+            <input
+              className="field-ink"
+              value={note}
+              maxLength={140}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Optioneel"
+            />
+          </label>
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              className="btn btn-ink flex-1"
+              disabled={!preview || missingSelf}
+              onClick={() => onSubmit({ sides, note })}
+            >
+              Vastleggen
             </button>
             <Dialog.Close type="button" className="btn btn-quiet">
               Terug

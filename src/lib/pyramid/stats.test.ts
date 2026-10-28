@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { lastResults, monthWinShare, pyramidStats } from "./stats.ts";
+import { currentStreaks, lastResults, monthWinShare, pyramidStats } from "./stats.ts";
 import type { Match } from "./types.ts";
 
 function match(partial: Partial<Match> & Pick<Match, "winnerName" | "loserName" | "playedAt">): Match {
@@ -75,5 +75,29 @@ describe("pyramid stats", () => {
     ]);
     assert.equal(results.get("b")?.line, "2–1 winst");
     assert.equal(results.get("t")?.line, "1–2 verlies");
+  });
+
+  it("counts wins in a row and clears the streak after a loss", () => {
+    const matches = [
+      match({ id: "1", winnerName: "Tim", loserName: "Bart", playedAt: "2026-10-01T12:00:00.000Z", winnerId: "t", loserId: "b" }),
+      match({ id: "2", winnerName: "Tim", loserName: "Bart", playedAt: "2026-10-02T12:00:00.000Z", winnerId: "t", loserId: "b" }),
+      match({
+        id: "3",
+        winnerName: "Tim",
+        loserName: "Bart",
+        winnerScore: 1,
+        loserScore: 1,
+        playedAt: "2026-10-03T12:00:00.000Z",
+        winnerId: "t",
+        loserId: "b",
+      }),
+      match({ id: "4", winnerName: "Bart", loserName: "Tim", playedAt: "2026-10-04T12:00:00.000Z", winnerId: "b", loserId: "t" }),
+    ];
+    const now = currentStreaks(matches);
+    assert.equal(now.get("t"), 0);
+    assert.equal(now.get("b"), 1);
+    const stats = pyramidStats([], matches, new Date("2026-10-23T12:00:00.000Z"));
+    assert.equal(stats.streaks[0]?.label, "Tim");
+    assert.equal(stats.streaks[0]?.value, 2);
   });
 });

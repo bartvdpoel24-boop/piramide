@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
 import { cleanEmail } from "./email";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
 import { CHALLENGE_RANGE, type NoteColor, type SettleResult, type Slot } from "./types";
@@ -25,6 +25,7 @@ type DemoActions = {
     note: string;
     challengeId?: string | null;
   }) => SettleResult;
+  recordGroup: (input: { sides: { id: string; score: number }[]; note: string }) => SettleResult;
   nudge: (playerId: string, direction: -1 | 1) => void;
   remove: (playerId: string) => void;
   restore: (playerId: string) => void;
@@ -135,6 +136,55 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           ),
         });
         return settled;
+      },
+      recordGroup: ({ sides, note }) => {
+        const persona = get().players.find((player) => player.id === get().personaId);
+        const involved = sides.some((side) => side.id === get().personaId);
+        if (!involved && !isPyramidAdmin(persona)) {
+          throw new Error("Alleen wie meedeed of de beheerder vult de uitslag in.");
+        }
+        const settled = settleGroup(get().players, sides);
+        const top = settled.places[0];
+        const bottom = settled.places[settled.places.length - 1];
+        if (!top || !bottom) throw new Error("Kies minstens twee spelers.");
+        const sharedTop = settled.places.filter((place) => place.score === top.score).length > 1;
+        set({
+          players: settled.players,
+          matches: [
+            {
+              id: crypto.randomUUID(),
+              winnerId: top.id,
+              loserId: bottom.id,
+              winnerName: top.name,
+              loserName: bottom.name,
+              winnerScore: top.score,
+              loserScore: sharedTop ? top.score : bottom.score,
+              winnerRankBefore: top.rankBefore,
+              loserRankBefore: bottom.rankBefore,
+              swapped: settled.swapped,
+              stipAwarded: settled.stipAwarded,
+              playedAt: new Date().toISOString(),
+              note: note.slice(0, 140),
+              challengeId: null,
+              sides: settled.places,
+            },
+            ...get().matches,
+          ],
+        });
+        return {
+          winnerId: top.id,
+          loserId: bottom.id,
+          winnerName: top.name,
+          loserName: bottom.name,
+          winnerScore: top.score,
+          loserScore: sharedTop ? top.score : bottom.score,
+          winnerRankBefore: top.rankBefore,
+          loserRankBefore: bottom.rankBefore,
+          swapped: settled.swapped,
+          stipAwarded: settled.stipAwarded,
+          draw: settled.draw,
+          players: settled.players,
+        };
       },
       nudge: (playerId, direction) => set({ players: nudgePlayer(get().players, playerId, direction) }),
       remove: (playerId) => {

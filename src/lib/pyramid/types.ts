@@ -118,6 +118,7 @@ export type HomeMatch = {
   swapped: boolean;
   stipAwarded: boolean;
   playedAt: string;
+  sides?: MatchSide[];
 };
 
 export type InvitePreview = {

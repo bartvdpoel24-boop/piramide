@@ -63,6 +63,7 @@ function DemoPage() {
       }}
       onRespond={async (id, action) => state.respond(id, action)}
       onResult={async (input) => state.record(input)}
+      onGroupResult={async (input) => state.recordGroup(input)}
       onEditResult={async (input) => state.revise(input.matchId, input.winnerScore, input.loserScore, input.note)}
       onAvailability={async (slots) => state.setAvailability(slots)}
       onNudge={async (playerId, direction) => state.nudge(playerId, direction)}

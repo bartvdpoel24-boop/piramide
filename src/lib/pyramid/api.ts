@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
 import { challengeMail, cleanEmail } from "./email";
 import { challengeWhen } from "./format";
 import { monthWinShare } from "./stats";
@@ -13,6 +13,7 @@ import {
   type Challenge,
   type HomeChallenge,
   type HomeMatch,
+  type MatchSide,
   type InvitePreview,
   type LadderSnapshot,
   type LadderSummary,
@@ -22,6 +23,29 @@ import {
 } from "./types";
 
 type Sql = Awaited<ReturnType<(typeof import("@/lib/db"))["getSql"]>>;
+
+function readSides(value: unknown): MatchSide[] | undefined {
+  if (value == null) return undefined;
+  let raw = value;
+  if (typeof value === "string") {
+    try {
+      raw = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(raw) || raw.length < 2) return undefined;
+  return raw.map((side) => {
+    const row = side as Partial<MatchSide>;
+    return {
+      id: String(row.id ?? ""),
+      name: String(row.name ?? ""),
+      score: Number(row.score),
+      rankBefore: Number(row.rankBefore),
+      rankAfter: Number(row.rankAfter),
+    };
+  });
+}
 
 async function db() {
   const { getSql } = await import("@/lib/db");
@@ -143,9 +167,10 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
     played_at: unknown;
     note: string;
     challenge_id: string | null;
+    sides: unknown;
   }>`
     select id, winner_id, loser_id, winner_name, loser_name, winner_score, loser_score,
-           winner_rank_before, loser_rank_before, swapped, stip_awarded, played_at, note, challenge_id
+           winner_rank_before, loser_rank_before, swapped, stip_awarded, played_at, note, challenge_id, sides
     from ladder_matches
     where ladder_id = ${ladderId}
     order by played_at desc
@@ -185,6 +210,7 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
       playedAt: iso(row.played_at),
       note: row.note,
       challengeId: row.challenge_id,
+      sides: readSides(row.sides),
     })),
   };
 }
@@ -297,10 +323,11 @@ export const homeFeed = createServerFn({ method: "GET" })
       swapped: boolean;
       stip_awarded: boolean;
       played_at: unknown;
+      sides: unknown;
     }>`
       select m.id, m.ladder_id, l.name as ladder_name,
         m.winner_name, m.loser_name, m.winner_score, m.loser_score,
-        m.winner_rank_before, m.loser_rank_before, m.swapped, m.stip_awarded, m.played_at
+        m.winner_rank_before, m.loser_rank_before, m.swapped, m.stip_awarded, m.played_at, m.sides
       from ladder_matches m
       join ladders l on l.id = m.ladder_id
       where l.owner_id = ${context.userId}
@@ -355,6 +382,7 @@ export const homeFeed = createServerFn({ method: "GET" })
         swapped: Boolean(row.swapped),
         stipAwarded: Boolean(row.stip_awarded),
         playedAt: iso(row.played_at),
+        sides: readSides(row.sides),
       })),
       monthWins: monthWinShare(
         monthMatches.map((row) => ({
@@ -811,6 +839,54 @@ export const recordResult = createServerFn({ method: "POST" })
       stipAwarded: settled.stipAwarded,
       draw: settled.draw,
       winnerName: settled.winnerName,
+    };
+  });
+
+export const recordGroupResult = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; sides: { id: string; score: number }[]; note: string }) => {
+    if (!input?.ladderId || !Array.isArray(input.sides) || input.sides.length < 2) {
+      throw new Error("Kies minstens twee spelers.");
+    }
+    return {
+      ladderId: String(input.ladderId),
+      note: String(input.note ?? "").slice(0, 140),
+      sides: input.sides.map((side) => ({ id: String(side.id), score: Number(side.score) })),
+    };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    const access = await requireLadder(sql, context.userId, data.ladderId);
+    const players = await loadPlayers(sql, data.ladderId);
+    const actor = players.find((player) => player.userId === context.userId);
+    const involved = data.sides.some((side) => players.find((player) => player.id === side.id)?.userId === context.userId);
+    if (!involved && !access.amOwner && !isPyramidAdmin(actor)) {
+      throw new Error("Alleen wie meedeed of de beheerder vult de uitslag in.");
+    }
+    const settled = settleGroup(players, data.sides);
+    await writeRoster(sql, data.ladderId, settled.players);
+    const top = settled.places[0];
+    const bottom = settled.places[settled.places.length - 1];
+    if (!top || !bottom) throw new Error("Kies minstens twee spelers.");
+    const sharedTop = settled.places.filter((place) => place.score === top.score).length > 1;
+    await sql`
+      insert into ladder_matches (
+        id, ladder_id, challenge_id, winner_id, loser_id, winner_name, loser_name,
+        winner_score, loser_score, winner_rank_before, loser_rank_before,
+        swapped, stip_awarded, played_at, note, recorded_by, sides
+      ) values (
+        ${crypto.randomUUID()}, ${data.ladderId}, ${null},
+        ${top.id}, ${bottom.id}, ${top.name}, ${bottom.name},
+        ${top.score}, ${sharedTop ? top.score : bottom.score}, ${top.rankBefore}, ${bottom.rankBefore},
+        ${settled.swapped}, ${settled.stipAwarded}, now(), ${data.note}, ${context.userId},
+        ${JSON.stringify(settled.places)}::jsonb
+      )
+    `;
+    return {
+      swapped: settled.swapped,
+      stipAwarded: settled.stipAwarded,
+      draw: settled.draw,
+      winnerName: top.name,
     };
   });
 
