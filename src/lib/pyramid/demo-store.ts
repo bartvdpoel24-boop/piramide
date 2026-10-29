@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
 import { cleanEmail } from "./email";
+import { isChallengeExpired } from "./format";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
 import { CHALLENGE_RANGE, type NoteColor, type SettleResult, type Slot } from "./types";
 
@@ -15,6 +16,7 @@ type DemoActions = {
     startMin: number | null;
     message: string;
     kind: "challenge" | "invite";
+    playOn?: string | null;
   }) => void;
   respond: (id: string, action: "accept" | "decline" | "cancel") => void;
   record: (input: {
@@ -50,8 +52,11 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           ),
         });
       },
-      challenge: ({ defenderId, day, startMin, message, kind }) => {
-        const { players, personaId, challenges } = get();
+      challenge: ({ defenderId, day, startMin, message, kind, playOn }) => {
+        const { players, personaId } = get();
+        const challenges = get().challenges.map((item) =>
+          isChallengeExpired(item) ? { ...item, status: "expired" as const } : item,
+        );
         const me = players.find((player) => player.id === personaId);
         const defender = players.find((player) => player.id === defenderId);
         if (!me || !defender) throw new Error("Speler niet gevonden.");
@@ -82,6 +87,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               kind,
               proposedDay: day,
               proposedStartMin: startMin,
+              playOn: playOn && /^\d{4}-\d{2}-\d{2}$/.test(playOn) ? playOn : null,
               message: message.slice(0, 140),
               createdAt: new Date().toISOString(),
             },

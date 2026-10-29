@@ -31,7 +31,7 @@ export type Player = {
   active?: boolean;
 };
 
-export type ChallengeStatus = "open" | "accepted" | "declined" | "played" | "cancelled";
+export type ChallengeStatus = "open" | "accepted" | "declined" | "played" | "cancelled" | "expired";
 
 export type Challenge = {
   id: string;
@@ -41,6 +41,7 @@ export type Challenge = {
   kind: "challenge" | "invite";
   proposedDay: number | null;
   proposedStartMin: number | null;
+  playOn: string | null;
   message: string;
   createdAt: string;
 };

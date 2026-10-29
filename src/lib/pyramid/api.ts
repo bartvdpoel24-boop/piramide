@@ -132,7 +132,36 @@ async function requireLadder(sql: Sql, userId: string, ladderId: string) {
   };
 }
 
+async function lapseChallenges(sql: Sql, ladderId?: string) {
+  if (ladderId) {
+    await sql`
+      update ladder_challenges
+      set status = 'expired'
+      where ladder_id = ${ladderId}
+        and status in ('open', 'accepted')
+        and coalesce(play_on, (created_at at time zone 'Europe/Amsterdam')::date)
+            <= ((now() at time zone 'Europe/Amsterdam')::date - 5)
+    `;
+    return;
+  }
+  await sql`
+    update ladder_challenges
+    set status = 'expired'
+    where status in ('open', 'accepted')
+      and coalesce(play_on, (created_at at time zone 'Europe/Amsterdam')::date)
+          <= ((now() at time zone 'Europe/Amsterdam')::date - 5)
+  `;
+}
+
+function asDay(value: unknown) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const match = String(value).match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+}
+
 async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<LadderSnapshot> {
+  await lapseChallenges(sql, ladderId);
   const access = await requireLadder(sql, userId, ladderId);
   const players = await loadPlayers(sql, ladderId, true);
   const challenges = await sql<{
@@ -145,8 +174,9 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
     proposed_start_min: number | null;
     message: string;
     created_at: unknown;
+    play_on: unknown;
   }>`
-    select id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, message, created_at
+    select id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, message, created_at, play_on
     from ladder_challenges
     where ladder_id = ${ladderId}
     order by created_at desc
@@ -192,6 +222,7 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
       kind: row.kind === "invite" ? "invite" : "challenge",
       proposedDay: row.proposed_day == null ? null : Number(row.proposed_day),
       proposedStartMin: row.proposed_start_min == null ? null : Number(row.proposed_start_min),
+      playOn: asDay(row.play_on),
       message: row.message,
       createdAt: iso(row.created_at),
     })),
@@ -282,6 +313,7 @@ export const homeFeed = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }): Promise<{ challenges: HomeChallenge[]; matches: HomeMatch[]; monthWins: { label: string; value: number; text: string }[] }> => {
     const sql = await db();
+    await lapseChallenges(sql);
     const challenges = await sql<{
       id: string;
       ladder_id: string;
@@ -649,6 +681,7 @@ export const createChallenge = createServerFn({ method: "POST" })
       startMin: number | null;
       message: string;
       kind?: string;
+      playOn?: string | null;
     }) => {
       if (!input?.ladderId || !input.defenderId) throw new Error("Kies wie je uitdaagt.");
       const day = input.day == null ? null : Number(input.day);
@@ -662,6 +695,7 @@ export const createChallenge = createServerFn({ method: "POST" })
         startMin,
         message: String(input.message ?? "").slice(0, 140),
         kind,
+        playOn: typeof input.playOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.playOn) ? input.playOn : null,
       };
     },
   )
@@ -683,6 +717,7 @@ export const createChallenge = createServerFn({ method: "POST" })
           : `Je kunt alleen iemand tot ${access.range} plaatsen boven je uitdagen.`,
       );
     }
+    await lapseChallenges(sql, data.ladderId);
     const pending = await sql<{ id: string }>`
       select id from ladder_challenges
       where ladder_id = ${data.ladderId}
@@ -695,10 +730,10 @@ export const createChallenge = createServerFn({ method: "POST" })
     if (pending[0]) throw new Error("Er staat al een open uitdaging tussen jullie.");
     await sql`
       insert into ladder_challenges (
-        id, ladder_id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, message, created_by
+        id, ladder_id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, play_on, message, created_by
       ) values (
         ${crypto.randomUUID()}, ${data.ladderId}, ${me.id}, ${defender.id}, 'open', ${data.kind},
-        ${data.day}, ${data.startMin}, ${data.message}, ${context.userId}
+        ${data.day}, ${data.startMin}, ${data.playOn}, ${data.message}, ${context.userId}
       )
     `;
     let mailed = false;
@@ -707,7 +742,11 @@ export const createChallenge = createServerFn({ method: "POST" })
         to: defender.email,
         challenger: me.name,
         ladder: access.ladder.name,
-        when: challengeWhen({ proposedDay: data.day, proposedStartMin: data.startMin }),
+        when: challengeWhen({
+          proposedDay: data.day,
+          proposedStartMin: data.startMin,
+          playOn: data.playOn,
+        }),
         message: data.message,
       });
       const { deliverChallengeMail } = await import("./email.server");
@@ -728,6 +767,7 @@ export const respondChallenge = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await db();
     const access = await requireLadder(sql, context.userId, data.ladderId);
+    await lapseChallenges(sql, data.ladderId);
     const rows = await sql<{
       id: string;
       challenger_id: string;
@@ -740,6 +780,7 @@ export const respondChallenge = createServerFn({ method: "POST" })
     `;
     const challenge = rows[0];
     if (!challenge) throw new Error("Uitdaging niet gevonden.");
+    if (challenge.status === "expired") throw new Error("Deze uitdaging is vervallen.");
     const players = await loadPlayers(sql, data.ladderId);
     const challenger = players.find((player) => player.id === challenge.challenger_id);
     const defender = players.find((player) => player.id === challenge.defender_id);

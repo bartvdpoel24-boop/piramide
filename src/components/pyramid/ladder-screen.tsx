@@ -4,11 +4,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronDown, ChevronUp, Copy, Crown, Minus, Plus, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  amsterdamDate,
   challengeWhen,
   DAYS_LONG,
   fmtMin,
   fmtSlot,
   fmtWhen,
+  isChallengeExpired,
   matchSummary,
   todayDayIndex,
 } from "@/lib/pyramid/format";
@@ -43,6 +45,7 @@ export type LadderActions = {
     startMin: number | null;
     message: string;
     kind: "challenge" | "invite";
+    playOn: string | null;
   }) => Promise<{ mailed?: boolean; notify?: boolean } | void>;
   onRespond: (id: string, action: "accept" | "decline" | "cancel") => Promise<void>;
   onResult: (input: {
@@ -118,7 +121,13 @@ export function LadderScreen(props: Props) {
   const latest = useMemo(() => lastResults(matches), [matches]);
   const streaks = useMemo(() => currentStreaks(matches), [matches]);
   const selected = wall.find((player) => player.id === selectedId) ?? null;
-  const active = challenges.filter((item) => item.status === "open" || item.status === "accepted");
+  const challengesNow = useMemo(
+    () => challenges.map((challenge) => (isChallengeExpired(challenge) ? { ...challenge, status: "expired" as const } : challenge)),
+    [challenges],
+  );
+  const active = challengesNow.filter((item) => item.status === "open" || item.status === "accepted");
+  const todayKey = amsterdamDate();
+  const freshResults = matches.filter((match) => amsterdamDate(match.playedAt) === todayKey);
   const today = todayDayIndex();
   const freeToday = wall.filter((player) => player.availability.some((slot) => slot.day === today));
 
@@ -216,6 +225,14 @@ export function LadderScreen(props: Props) {
                 >
                   {active.length} open
                 </button>
+              ) : id === "uitslagen" && freshResults.length > 0 ? (
+                <button
+                  type="button"
+                  className="text-xs text-ivory underline decoration-brass underline-offset-2"
+                  onClick={() => setTab("uitslagen")}
+                >
+                  {freshResults.length} nieuw
+                </button>
               ) : (
                 <span className="h-4" aria-hidden />
               )}
@@ -278,7 +295,7 @@ export function LadderScreen(props: Props) {
 
       {tab === "uitdagingen" ? (
         <ChallengeList
-          challenges={challenges}
+          challenges={challengesNow}
           players={players}
           meId={meId}
           amOwner={props.amOwner}
@@ -881,8 +898,8 @@ function ChallengeList({
 }) {
   const name = (id: string) => players.find((player) => player.id === id)?.name ?? "Onbekend";
   const [showPlayed, setShowPlayed] = useState(false);
-  const played = challenges.filter((challenge) => challenge.status === "played");
-  const shown = showPlayed ? challenges : challenges.filter((challenge) => challenge.status !== "played");
+  const played = challenges.filter((challenge) => challenge.status === "played" || challenge.status === "expired");
+  const shown = showPlayed ? challenges : challenges.filter((challenge) => challenge.status !== "played" && challenge.status !== "expired");
   if (challenges.length === 0) {
     return <p className="panel p-4 text-sm text-ivory-dim">{empty}</p>;
   }
@@ -953,6 +970,7 @@ function labelStatus(status: Challenge["status"]) {
   if (status === "accepted") return "afgesproken";
   if (status === "declined") return "afgewezen";
   if (status === "played") return "gespeeld";
+  if (status === "expired") return "vervallen";
   return "ingetrokken";
 }
 
@@ -1183,15 +1201,18 @@ function ChallengeDialog({
     startMin: number | null;
     message: string;
     kind: "challenge" | "invite";
+    playOn: string | null;
   }) => void;
 }) {
   const overlaps = me && defender ? overlapSlots(me.availability, defender.availability) : [];
   const [choice, setChoice] = useState("none");
   const [message, setMessage] = useState("");
+  const [playOn, setPlayOn] = useState(() => amsterdamDate());
 
   useEffect(() => {
     setChoice(overlaps.length > 0 ? "0" : "none");
     setMessage("");
+    setPlayOn(amsterdamDate());
   }, [defender?.id, overlaps.length]);
 
   return (
@@ -1209,14 +1230,14 @@ function ChallengeDialog({
             className="mt-4 flex flex-col gap-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!defender) return;
+              if (!defender || !/^\d{4}-\d{2}-\d{2}$/.test(playOn)) return;
               if (choice === "none") {
-                onSubmit({ defenderId: defender.id, day: null, startMin: null, message, kind });
+                onSubmit({ defenderId: defender.id, day: null, startMin: null, message, kind, playOn });
                 return;
               }
               const slot = overlaps[Number(choice)];
               if (!slot) return;
-              onSubmit({ defenderId: defender.id, day: slot.day, startMin: slot.startMin, message, kind });
+              onSubmit({ defenderId: defender.id, day: slot.day, startMin: slot.startMin, message, kind, playOn });
             }}
           >
             {overlaps.length > 0 ? (
@@ -1245,6 +1266,10 @@ function ChallengeDialog({
                   : "Geen overlappende tijden. Daag toch uit en spreek het zelf af."}
               </p>
             )}
+            <label className="flex flex-col gap-1 text-sm">
+              Datum
+              <input className="field-ink" type="date" required value={playOn} onChange={(event) => setPlayOn(event.target.value)} />
+            </label>
             <label className="flex flex-col gap-1 text-sm">
               Bericht
               <input

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { isChallengeExpired, shiftDate } from "./format.ts";
 import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleGroup, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
@@ -138,5 +139,27 @@ describe("piramide rules", () => {
     assert.equal(tied.draw, true);
     assert.equal(tied.players.find((item) => item.id === "b")?.rank, 2);
     assert.equal(tied.swapped, false);
+  });
+});
+
+describe("challenge expiry", () => {
+  it("lapses an open challenge five days after its date", () => {
+    const today = "2026-10-29";
+    const old = shiftDate(today, -5);
+    assert.equal(
+      isChallengeExpired({ status: "open", playOn: old, createdAt: "2026-10-29T10:00:00.000Z" }, new Date("2026-10-29T12:00:00.000Z")),
+      true,
+    );
+    assert.equal(
+      isChallengeExpired(
+        { status: "open", playOn: shiftDate(today, -4), createdAt: "2026-10-25T10:00:00.000Z" },
+        new Date("2026-10-29T12:00:00.000Z"),
+      ),
+      false,
+    );
+    assert.equal(
+      isChallengeExpired({ status: "played", playOn: old, createdAt: "2026-10-20T10:00:00.000Z" }, new Date("2026-10-29T12:00:00.000Z")),
+      false,
+    );
   });
 });

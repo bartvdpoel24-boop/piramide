@@ -53,9 +53,61 @@ export function todayDayIndex(now = new Date()) {
   return map[weekday] ?? 0;
 }
 
-export function challengeWhen(challenge: Pick<Challenge, "proposedDay" | "proposedStartMin">) {
-  if (challenge.proposedDay == null || challenge.proposedStartMin == null) return "tijdstip nog open";
-  return `${DAYS_LONG[challenge.proposedDay]} ${fmtMin(challenge.proposedStartMin)}`;
+export function amsterdamDate(instant: Date | string = new Date()) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+export function shiftDate(day: string, days: number) {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  const utc = new Date(Date.UTC(year, month - 1, date));
+  utc.setUTCDate(utc.getUTCDate() + days);
+  return utc.toISOString().slice(0, 10);
+}
+
+export function fmtPlainDate(day: string) {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  return new Intl.DateTimeFormat("nl-NL", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, date)));
+}
+
+export function isChallengeExpired(
+  challenge: { status: string; playOn?: string | null; createdAt: string },
+  now = new Date(),
+) {
+  if (challenge.status !== "open" && challenge.status !== "accepted") return false;
+  const today = amsterdamDate(now);
+  const start = challenge.playOn && /^\d{4}-\d{2}-\d{2}$/.test(challenge.playOn)
+    ? challenge.playOn
+    : amsterdamDate(challenge.createdAt);
+  if (!start || !today) return false;
+  return start <= shiftDate(today, -5);
+}
+
+export function challengeWhen(
+  challenge: Pick<Challenge, "proposedDay" | "proposedStartMin"> & { playOn?: string | null; createdAt?: string },
+) {
+  const when =
+    challenge.proposedDay == null || challenge.proposedStartMin == null
+      ? "tijdstip nog open"
+      : `${DAYS_LONG[challenge.proposedDay]} ${fmtMin(challenge.proposedStartMin)}`;
+  const day = challenge.playOn
+    ? fmtPlainDate(challenge.playOn)
+    : challenge.createdAt
+      ? fmtDay(challenge.createdAt)
+      : "";
+  return day ? `${day} · ${when}` : when;
 }
 
 export function matchSummary(match: Match) {

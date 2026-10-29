@@ -53,7 +53,11 @@ function DemoPage() {
               to: defender.email,
               challenger: me.name,
               ladder: "Kantoorpiramide",
-              when: challengeWhen({ proposedDay: input.day, proposedStartMin: input.startMin }),
+              when: challengeWhen({
+                proposedDay: input.day,
+                proposedStartMin: input.startMin,
+                playOn: input.playOn,
+              }),
               message: input.message,
             },
           });
