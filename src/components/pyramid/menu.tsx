@@ -1,23 +1,25 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Menu, X } from "lucide-react";
+import { ChevronDown, Menu, X } from "lucide-react";
 import { toast } from "sonner";
 import { authEnabled, GROK_PROVIDERS, signIn, signOut } from "@/lib/auth/client";
 import { hasGateSessionMarker } from "@/lib/auth/gate-session-marker";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { getLadder, listMyLadders, renameMe, setAvailability, setNoteColor, setNotifyEmail } from "@/lib/pyramid/api";
+import { getLadder, listMyLadders, renameMe, setAvailability, setNoteColor, setNotifyEmail, databaseStatus, exportLadderBackup, restoreLadderBackup } from "@/lib/pyramid/api";
 import { cn } from "@/lib/cn";
 import { NOTE_BG, NOTE_LABEL } from "@/lib/pyramid/notes";
-import { NOTE_COLORS, type NoteColor, type Player, type Slot } from "@/lib/pyramid/types";
-import { pyramidStats } from "@/lib/pyramid/stats";
+import { NOTE_COLORS, type Challenge, type Match, type NoteColor, type Player, type Slot } from "@/lib/pyramid/types";
+import { pyramidStats, headToHead } from "@/lib/pyramid/stats";
+import { fmtWhen } from "@/lib/pyramid/format";
 import { StatsPanel } from "./stats-panel";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
 import type { LadderSummary } from "@/lib/pyramid/types";
 import { AvailabilityForm } from "./availability-form";
 import { CreateForm } from "./create-form";
+import { VERSION, RELEASES } from "@/lib/pyramid/version";
 
-type View = "main" | "create" | "settings" | "stats" | "info";
+type View = "main" | "create" | "settings" | "stats" | "h2h" | "info" | "regels" | "versie";
 
 const subscribeNothing = () => () => {};
 
@@ -69,9 +71,15 @@ export function AppMenu() {
                   ? "Instellingen"
                   : view === "stats"
                     ? "Statistieken"
-                    : view === "info"
-                      ? "Info"
-                      : "Menu"}
+                    : view === "h2h"
+                      ? "Head to head"
+                      : view === "info"
+                        ? "Info"
+                        : view === "regels"
+                          ? "Poolregels"
+                          : view === "versie"
+                            ? "Versie"
+                            : "Menu"}
             </Dialog.Title>
             <Dialog.Close className="btn btn-ghost size-11 px-0" aria-label="Sluiten">
               <X className="size-5" />
@@ -115,8 +123,17 @@ export function AppMenu() {
               <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("stats")}>
                 Statistieken
               </button>
+              <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("h2h")}>
+                Head to head
+              </button>
               <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("info")}>
                 Info
+              </button>
+              <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("regels")}>
+                Poolregels
+              </button>
+              <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("versie")}>
+                Versie
               </button>
             </nav>
           ) : null}
@@ -134,7 +151,10 @@ export function AppMenu() {
           ) : null}
           {view === "settings" ? <SettingsBody demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
           {view === "stats" ? <StatsBody demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
+          {view === "h2h" ? <HeadToHead demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
           {view === "info" ? <InfoBody /> : null}
+          {view === "regels" ? <RulesBody /> : null}
+          {view === "versie" ? <VersionBody /> : null}
           {view !== "main" ? (
             <button type="button" className="btn btn-ghost self-start" onClick={() => setView("main")}>
               Terug
@@ -146,10 +166,57 @@ export function AppMenu() {
   );
 }
 
+function RulesBody() {
+  const blocks = [
+    ["Het spel", "8-ball. Eerst je groep weg: de hele ballen 1 tot en met 7, of de strepen 9 tot en met 15. Daarna de zwarte 8 in de pocket die je geroepen hebt."],
+    ["Pocket callen", "Vóór elke stoot zeg je welke bal in welke pocket gaat. Hoe, via band of andere bal, hoef je niet te zeggen. De break hoef je niet te callen."],
+    ["Verkeerde pocket", "Valt de bal in een ander gat, dan blijft hij weg. De beurt gaat over. Dat is geen fout. Mis je, dan mag je die bal de volgende beurt in een ander gat callen."],
+    ["Open tafel", "Na de break is de tafel open, ook als er al een bal in is gegaan. Heel of streep staat pas vast als iemand ná de break een gecallde bal goed pot. Zolang het open is, mag je ook via de 8 een andere bal callen."],
+    ["De break", "De witte begint achter de lijn. Er moet een bal in, of minstens vier ballen moeten de kopband raken. Pot je iets, dan ga je door. Anders is de ander aan de beurt."],
+    ["Acht op de break", "Pot je de 8 bij de break, dan kies je: opnieuw breaken, of de 8 terug op de stip. Je blijft aan de beurt. Gaat de witte bij de break van tafel, dan heeft de ander ball-in-hand achter de lijn."],
+    ["Fout", "Witte of een bal van tafel. De witte niet met de pomerans raken, twee keer raken of duwen. Geen band raken nadat je een bal hebt geraakt, zonder dat er iets in gaat. Een fout is ball-in-hand: de witte mag overal. Een speler is nooit twee keer achter elkaar aan de beurt door een fout. Ballen die van tafel zijn of bij een fout in zijn gegaan, komen niet terug."],
+    ["De acht verliest", "Je verliest het frame als je de 8 pot én een fout maakt, de 8 in dezelfde stoot als je laatste groepsbal pot, de 8 van tafel speelt, de 8 in een andere pocket dan geroepen pot, of de 8 pot terwijl je een andere bal had gecalled. Een fout waarbij de 8 op tafel blijft, is geen verlies."],
+  ];
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-ivory-dim">Call-shot 8-ball. Elke bal én de pocket zeg je van tevoren.</p>
+      {blocks.map(([title, body]) => (
+        <section key={title}>
+          <h2 className="font-display text-2xl italic">{title}</h2>
+          <p className="text-sm text-ivory-dim">{body}</p>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function VersionBody() {
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="font-display text-6xl italic leading-none">{VERSION}</p>
+      <ol className="flex flex-col gap-4">
+        {RELEASES.map((release) => (
+          <li key={release.version} className="border-t border-line pt-3">
+            <p className="font-display text-xl italic">Versie {release.version}</p>
+            <p className="text-xs text-ivory-dim">{release.date}</p>
+            <ul className="mt-2 flex flex-col gap-1">
+              {release.notes.map((note) => (
+                <li key={note} className="text-sm text-ivory-dim">
+                  {note}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function InfoBody() {
   const blocks = [
     ["De piramide", "Elk briefje is een plek. Hoe hoger, hoe beter. Het bovenste briefje is de troon."],
-    ["Uitdagen", "Je daagt iemand uit die maximaal vier plaatsen boven je staat. Iemand onder je, tot vier plaatsen, nodig je uit."],
+    ["Uitdagen", "Je daagt iemand uit die maximaal vier plaatsen boven je staat. Iemand onder je, tot vier plaatsen, nodig je uit. Staat iemand verder weg, dan nodig je uit om vrij te spelen. De piramide blijft dan staan."],
     ["Wisselen", "Win je van iemand boven je, dan wisselen jullie van plek. De rest blijft hangen."],
     ["Gelijkspel", "Bij een gelijkspel verandert er niets."],
     ["Stippen", "Houdt de nummer 1 stand, dan komt er een stip bij op de troon."],
@@ -165,6 +232,115 @@ function InfoBody() {
           <p className="text-sm text-ivory-dim">{body}</p>
         </section>
       ))}
+    </div>
+  );
+}
+
+function HeadToHead({
+  demo,
+  ladderId,
+  signedIn,
+}: {
+  demo: boolean;
+  ladderId: string | null;
+  signedIn: boolean;
+}) {
+  const demoPlayers = useDemoStore((state) => state.players);
+  const demoMatches = useDemoStore((state) => state.matches);
+  const [players, setPlayers] = useState<Player[] | null>(null);
+  const [matches, setMatches] = useState<typeof demoMatches | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [leftId, setLeftId] = useState("");
+  const [rightId, setRightId] = useState("");
+
+  useEffect(() => {
+    if (demo) {
+      setPlayers(demoPlayers.filter((player) => player.active !== false && player.rank > 0));
+      setMatches(demoMatches);
+      return;
+    }
+    if (!ladderId && !signedIn) return;
+    let active = true;
+    const load = async () => {
+      if (ladderId) return getLadder({ data: ladderId });
+      const mine = await listMyLadders();
+      const first = mine.ladders.find((ladder) => ladder.myRank != null) ?? mine.ladders[0];
+      if (!first) return null;
+      return getLadder({ data: first.id });
+    };
+    load()
+      .then((snapshot) => {
+        if (!active) return;
+        const wall = (snapshot?.players ?? []).filter((player) => player.active !== false && player.rank > 0);
+        setPlayers(wall);
+        setMatches(snapshot?.matches ?? []);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorText(reason));
+      });
+    return () => {
+      active = false;
+    };
+  }, [demo, ladderId, signedIn, demoPlayers, demoMatches]);
+
+  const wall = players ?? [];
+  const left = leftId || wall[0]?.id || "";
+  const right = rightId || wall.find((player) => player.id !== left)?.id || "";
+  const leftPlayer = wall.find((player) => player.id === left);
+  const rightPlayer = wall.find((player) => player.id === right);
+  const compared = matches && left && right && left !== right ? headToHead(matches, left, right) : null;
+
+  if (!demo && !ladderId && !signedIn) {
+    return <p className="text-sm text-ivory-dim">Open een piramide om twee spelers te vergelijken.</p>;
+  }
+  if (error) return <p className="text-sm text-brass">{error}</p>;
+  if (!players || !matches) return <div className="panel h-24 animate-pulse" />;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex flex-col gap-1 text-sm">
+        Speler
+        <select className="field" value={left} onChange={(event) => setLeftId(event.target.value)}>
+          {wall.map((player) => (
+            <option key={player.id} value={player.id}>
+              {player.rank}. {player.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-sm">
+        Tegen
+        <select className="field" value={right} onChange={(event) => setRightId(event.target.value)}>
+          {wall.map((player) => (
+            <option key={player.id} value={player.id}>
+              {player.rank}. {player.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {compared && leftPlayer && rightPlayer ? (
+        <>
+          <p className="font-display text-2xl italic">
+            Totaal {leftPlayer.name} {compared.leftTotal} – {compared.rightTotal} {rightPlayer.name}
+          </p>
+          {compared.lines.length === 0 ? (
+            <p className="text-sm text-ivory-dim">Deze twee hebben nog niet tegen elkaar gespeeld.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {compared.lines.map((line) => (
+                <li key={line.id} className="panel p-3 text-sm">
+                  <span className="text-ivory-dim">{fmtWhen(line.playedAt)}</span>
+                  <span className="mt-1 block font-display text-lg italic">
+                    {leftPlayer.name} {line.left} – {line.right} {rightPlayer.name}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-ivory-dim">Kies twee verschillende spelers.</p>
+      )}
     </div>
   );
 }
@@ -257,13 +433,21 @@ function DemoSettings() {
   const me = players.find((player) => player.id === personaId) ?? null;
   if (!me) return <p className="text-sm text-ivory-dim">Geen speler gekozen.</p>;
   return (
-    <PlayerSettings
-      player={me}
-      onRename={(name) => useDemoStore.getState().rename(name)}
-      onEmail={(email) => useDemoStore.getState().setEmail(email)}
-      onColor={(color) => useDemoStore.getState().setNote(color)}
-      onAvailability={(slots) => useDemoStore.getState().setAvailability(slots)}
-    />
+    <div className="flex flex-col">
+      <PlayerSettings
+        player={me}
+        onRename={(name) => useDemoStore.getState().rename(name)}
+        onEmail={(email) => useDemoStore.getState().setEmail(email)}
+        onColor={(color) => useDemoStore.getState().setNote(color)}
+        onAvailability={(slots) => useDemoStore.getState().setAvailability(slots)}
+      />
+      <Fold title="Backup">
+        <DemoBackup />
+      </Fold>
+      <Fold title="Database">
+        <DatabasePanel demo />
+      </Fold>
+    </div>
   );
 }
 
@@ -271,6 +455,7 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
   const [ladders, setLadders] = useState<LadderSummary[] | null>(null);
   const [chosen, setChosen] = useState(ladderId ?? "");
   const [player, setPlayer] = useState<Player | null | undefined>(undefined);
+  const [amOwner, setAmOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -301,6 +486,7 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
       .then((snapshot) => {
         if (!active) return;
         setPlayer(snapshot.players.find((item) => item.id === snapshot.meId) ?? null);
+        setAmOwner(snapshot.amOwner);
         setError(null);
       })
       .catch((reason: unknown) => {
@@ -318,9 +504,9 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col">
       {!ladderId && ladders && ladders.length > 1 ? (
-        <label className="flex flex-col gap-1 text-sm">
+        <label className="mb-3 flex flex-col gap-1 text-sm">
           Piramide
           <select className="field" value={chosen} onChange={(event) => setChosen(event.target.value)}>
             {ladders.map((ladder) => (
@@ -362,6 +548,12 @@ function LiveSettings({ ladderId }: { ladderId: string | null }) {
           Je naam staat nog niet op deze piramide. Koppel een briefje, dan kun je naam en tijden hier zetten.
         </p>
       )}
+      <Fold title="Backup">
+        <LiveBackup ladderId={activeId} amOwner={amOwner} />
+      </Fold>
+      <Fold title="Database">
+        <DatabasePanel />
+      </Fold>
     </div>
   );
 }
@@ -385,59 +577,60 @@ function PlayerSettings({
   const [mailError, setMailError] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-col gap-6">
-      <form
-        className="flex flex-col gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setError(null);
-          Promise.resolve(onRename(name))
-            .then(() => toast.success("Naam gewijzigd."))
-            .catch((reason: unknown) => setError(errorText(reason)));
-        }}
-      >
-        <h2 className="font-display text-2xl italic">Naam wijzigen</h2>
-        <label className="flex flex-col gap-1 text-sm">
-          Jouw naam
-          <input className="field" value={name} maxLength={40} onChange={(event) => setName(event.target.value)} />
-        </label>
-        {error ? <p className="text-sm text-brass">{error}</p> : null}
-        <button type="submit" className="btn btn-brass self-start" disabled={name.trim() === player.name}>
-          Bewaren
-        </button>
-      </form>
-      <form
-        className="flex flex-col gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setMailError(null);
-          Promise.resolve(onEmail(email))
-            .then(() => toast.success(email.trim() ? "E-mailadres bewaard." : "E-mailadres verwijderd."))
-            .catch((reason: unknown) => setMailError(errorText(reason)));
-        }}
-      >
-        <h2 className="font-display text-2xl italic">E-mailadres</h2>
-        <p className="text-sm text-ivory-dim">Als iemand je uitdaagt, krijg je daar een mail.</p>
-        <label className="flex flex-col gap-1 text-sm">
-          Jouw e-mail
-          <input
-            className="field"
-            type="email"
-            inputMode="email"
-            autoComplete="email"
-            value={email}
-            maxLength={120}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="naam@voorbeeld.nl"
-          />
-        </label>
-        {mailError ? <p className="text-sm text-brass">{mailError}</p> : null}
-        <button type="submit" className="btn btn-brass self-start" disabled={email.trim() === (player.email ?? "")}>
-          Bewaren
-        </button>
-      </form>
-      <div className="flex flex-col gap-2">
-        <h2 className="font-display text-2xl italic">Kleur van je briefje</h2>
+    <div className="flex flex-col">
+      <Fold title="Naam wijzigen">
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError(null);
+            Promise.resolve(onRename(name))
+              .then(() => toast.success("Naam gewijzigd."))
+              .catch((reason: unknown) => setError(errorText(reason)));
+          }}
+        >
+          <label className="flex flex-col gap-1 text-sm">
+            Jouw naam
+            <input className="field" value={name} maxLength={40} onChange={(event) => setName(event.target.value)} />
+          </label>
+          {error ? <p className="text-sm text-brass">{error}</p> : null}
+          <button type="submit" className="btn btn-brass self-start" disabled={name.trim() === player.name}>
+            Bewaren
+          </button>
+        </form>
+      </Fold>
+      <Fold title="E-mailadres">
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setMailError(null);
+            Promise.resolve(onEmail(email))
+              .then(() => toast.success(email.trim() ? "E-mailadres bewaard." : "E-mailadres verwijderd."))
+              .catch((reason: unknown) => setMailError(errorText(reason)));
+          }}
+        >
+          <p className="text-sm text-ivory-dim">Als iemand je uitdaagt, krijg je daar een mail.</p>
+          <label className="flex flex-col gap-1 text-sm">
+            Jouw e-mail
+            <input
+              className="field"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              value={email}
+              maxLength={120}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="naam@voorbeeld.nl"
+            />
+          </label>
+          {mailError ? <p className="text-sm text-brass">{mailError}</p> : null}
+          <button type="submit" className="btn btn-brass self-start" disabled={email.trim() === (player.email ?? "")}>
+            Bewaren
+          </button>
+        </form>
+      </Fold>
+      <Fold title="Kleur van je briefje">
         <div className="flex flex-wrap gap-2">
           {NOTE_COLORS.map((color) => (
             <button
@@ -460,9 +653,8 @@ function PlayerSettings({
             />
           ))}
         </div>
-      </div>
-      <div className="flex flex-col gap-2">
-        <h2 className="font-display text-2xl italic">Beschikbaarheid</h2>
+      </Fold>
+      <Fold title="Beschikbaarheid">
         <AvailabilityForm
           player={player}
           onSave={(slots) => {
@@ -471,7 +663,200 @@ function PlayerSettings({
               .catch((reason: unknown) => toast.error(errorText(reason)));
           }}
         />
-      </div>
+      </Fold>
+    </div>
+  );
+}
+
+function Fold({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <details className="group border-b border-line py-2">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-1 font-display text-2xl italic [&::-webkit-details-marker]:hidden">
+        {title}
+        <ChevronDown className="size-4 shrink-0 transition group-open:rotate-180" />
+      </summary>
+      <div className="mt-3 flex flex-col gap-2">{children}</div>
+    </details>
+  );
+}
+
+function downloadJson(name: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function readBackupFile(file: File) {
+  return file.text().then(
+    (text) =>
+      JSON.parse(text) as {
+        kind?: string;
+        players?: Player[];
+        challenges?: Challenge[];
+        matches?: Match[];
+        personaId?: string;
+        ladder?: { id?: string };
+      },
+  );
+}
+
+function DemoBackup() {
+  const fileRef = { current: null as HTMLInputElement | null };
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm text-ivory-dim">De demo staat op dit apparaat. Een bestand kun je bewaren en later terugzetten.</p>
+      <button
+        type="button"
+        className="btn btn-ivory self-start"
+        onClick={() => {
+          const state = useDemoStore.getState();
+          downloadJson(`piramide-demo-${new Date().toISOString().slice(0, 10)}.json`, {
+            kind: "piramide-backup",
+            version: 1,
+            source: "demo",
+            exportedAt: new Date().toISOString(),
+            personaId: state.personaId,
+            players: state.players,
+            challenges: state.challenges,
+            matches: state.matches,
+          });
+          toast.success("Backup gedownload.");
+        }}
+      >
+        Backup maken
+      </button>
+      <input
+        ref={(node) => {
+          fileRef.current = node;
+        }}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          void readBackupFile(file)
+            .then((backup) => {
+              if (backup.kind !== "piramide-backup" || !Array.isArray(backup.players)) {
+                throw new Error("Dit is geen piramide-backup.");
+              }
+              if (!window.confirm("De demo wordt vervangen door deze backup. Doorgaan?")) return;
+              useDemoStore.getState().loadBackup({
+                players: backup.players,
+                challenges: Array.isArray(backup.challenges) ? backup.challenges : [],
+                matches: Array.isArray(backup.matches) ? backup.matches : [],
+                personaId: backup.personaId ?? backup.players[0]?.id ?? "",
+              });
+              toast.success("Backup teruggezet.");
+            })
+            .catch((reason: unknown) => toast.error(errorText(reason)));
+        }}
+      />
+      <button type="button" className="btn btn-ghost self-start" onClick={() => fileRef.current?.click()}>
+        Backup terugzetten
+      </button>
+    </div>
+  );
+}
+
+function LiveBackup({ ladderId, amOwner }: { ladderId: string; amOwner: boolean }) {
+  const fileRef = { current: null as HTMLInputElement | null };
+  const [busy, setBusy] = useState(false);
+  if (!amOwner) {
+    return <p className="text-sm text-ivory-dim">Alleen de beheerder maakt een backup of zet die terug.</p>;
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm text-ivory-dim">Bewaar de piramide als bestand. Terugzetten vervangt de deelnemers, uitslagen en uitdagingen.</p>
+      <button
+        type="button"
+        className="btn btn-ivory self-start"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void exportLadderBackup({ data: ladderId })
+            .then((backup) => {
+              downloadJson(`piramide-${ladderId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.json`, backup);
+              toast.success("Backup gedownload.");
+            })
+            .catch((reason: unknown) => toast.error(errorText(reason)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Backup maken
+      </button>
+      <input
+        ref={(node) => {
+          fileRef.current = node;
+        }}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (!file) return;
+          void readBackupFile(file)
+            .then((backup) => {
+              if (!window.confirm("Deze piramide wordt vervangen door de backup. Doorgaan?")) return;
+              return restoreLadderBackup({ data: { ladderId, backup } }).then(() => {
+                window.dispatchEvent(new Event("piramide-refresh"));
+                toast.success("Backup teruggezet.");
+              });
+            })
+            .catch((reason: unknown) => toast.error(errorText(reason)));
+        }}
+      />
+      <button type="button" className="btn btn-ghost self-start" onClick={() => fileRef.current?.click()}>
+        Backup terugzetten
+      </button>
+    </div>
+  );
+}
+
+function DatabasePanel({ demo = false }: { demo?: boolean }) {
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof databaseStatus>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    databaseStatus()
+      .then((result) => {
+        if (active) setInfo(result);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorText(reason));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (error) return <p className="text-sm text-brass">{error}</p>;
+  if (!info) return <div className="panel h-16 animate-pulse" />;
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      {demo ? <p className="text-ivory-dim">De demo zelf staat alleen op dit apparaat.</p> : null}
+      {info.source === "neon" ? (
+        <>
+          <p>De piramide staat in Neon.</p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-ivory-dim">
+            <dt>Host</dt>
+            <dd className="truncate">{info.host ?? "onbekend"}</dd>
+            <dt>Database</dt>
+            <dd className="truncate">{info.database ?? "onbekend"}</dd>
+            <dt>Gebruiker</dt>
+            <dd className="truncate">{info.user ?? "onbekend"}</dd>
+            <dt>SSL</dt>
+            <dd>{info.ssl ?? "require"}</dd>
+          </dl>
+        </>
+      ) : (
+        <p className="text-ivory-dim">Er is geen Neon-database gekoppeld. De gegevens staan lokaal in de preview (PGLite).</p>
+      )}
     </div>
   );
 }

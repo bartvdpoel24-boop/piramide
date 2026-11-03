@@ -42,7 +42,7 @@ function DemoPage() {
       onReset={state.reset}
       onChallenge={async (input) => {
         state.challenge(input);
-        if (input.kind !== "challenge") return { mailed: false };
+        if (input.kind === "invite") return { mailed: false };
         const players = useDemoStore.getState().players;
         const me = players.find((player) => player.id === useDemoStore.getState().personaId);
         const defender = players.find((player) => player.id === input.defenderId);
@@ -59,6 +59,7 @@ function DemoPage() {
                 playOn: input.playOn,
               }),
               message: input.message,
+              free: input.kind === "friendly",
             },
           });
         } catch {

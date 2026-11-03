@@ -13,18 +13,21 @@ export function challengeMail(input: {
   ladder: string;
   when: string;
   message: string;
+  free?: boolean;
 }) {
   const lines = [
-    `${input.challenger} daagt je uit in ${input.ladder}.`,
+    input.free
+      ? `${input.challenger} nodigt je uit om vrij te spelen in ${input.ladder}. De piramide blijft staan.`
+      : `${input.challenger} daagt je uit in ${input.ladder}.`,
     "",
     input.when ? `Voorgesteld: ${input.when}` : "Er is nog geen tijdstip gekozen.",
     input.message ? `Bericht: ${input.message}` : null,
     "",
-    "Open Piramide om de uitdaging te accepteren of af te wijzen.",
+    "Open Piramide om te antwoorden.",
   ].filter((line): line is string => line !== null);
   return {
     to: input.to,
-    subject: `${input.challenger} daagt je uit in Piramide`,
+    subject: input.free ? `${input.challenger} nodigt je uit in Piramide` : `${input.challenger} daagt je uit in Piramide`,
     body: lines.join("\n"),
   };
 }

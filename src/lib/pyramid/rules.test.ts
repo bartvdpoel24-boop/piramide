@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { isChallengeExpired, shiftDate } from "./format.ts";
-import { canChallengeUp, canInviteDown, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleGroup, settleMatch } from "./rules.ts";
+import { canChallengeUp, canInviteDown, friendlyResult, isPyramidAdmin, legalDistance, normalizeSlots, nudgePlayer, parkPlayer, removePlayer, restorePlayer, sameOutcome, settleGroup, settleMatch } from "./rules.ts";
 import type { Player } from "./types.ts";
 
 function player(id: string, rank: number): Player {
@@ -139,6 +139,14 @@ describe("piramide rules", () => {
     assert.equal(tied.draw, true);
     assert.equal(tied.players.find((item) => item.id === "b")?.rank, 2);
     assert.equal(tied.swapped, false);
+  });
+
+  it("records a free match without moving the cards", () => {
+    const settled = friendlyResult([player("a", 1), player("b", 8)], "b", "a", 2, 0);
+    assert.equal(settled.swapped, false);
+    assert.equal(settled.winnerId, "b");
+    assert.equal(settled.players.find((item) => item.id === "a")?.rank, 1);
+    assert.equal(settled.players.find((item) => item.id === "b")?.rank, 8);
   });
 });
 

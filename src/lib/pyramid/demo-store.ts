@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, friendlyResult, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
 import { cleanEmail } from "./email";
 import { isChallengeExpired } from "./format";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
-import { CHALLENGE_RANGE, type NoteColor, type SettleResult, type Slot } from "./types";
+import { CHALLENGE_RANGE, type Challenge, type Match, type NoteColor, type SettleResult, type Slot } from "./types";
+import type { Player } from "./types";
 
 type DemoActions = {
   setPersona: (id: string) => void;
@@ -15,7 +16,7 @@ type DemoActions = {
     day: number | null;
     startMin: number | null;
     message: string;
-    kind: "challenge" | "invite";
+    kind: "challenge" | "invite" | "friendly";
     playOn?: string | null;
   }) => void;
   respond: (id: string, action: "accept" | "decline" | "cancel") => void;
@@ -36,6 +37,7 @@ type DemoActions = {
   rename: (name: string) => void;
   setEmail: (email: string) => void;
   setNote: (color: NoteColor) => void;
+  loadBackup: (input: { players: Player[]; challenges: Challenge[]; matches: Match[]; personaId: string }) => void;
 };
 
 export const useDemoStore = create<DemoState & DemoActions>()(
@@ -60,9 +62,12 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         const me = players.find((player) => player.id === personaId);
         const defender = players.find((player) => player.id === defenderId);
         if (!me || !defender) throw new Error("Speler niet gevonden.");
-        const allowed = kind === "invite"
-          ? canInviteDown(me.rank, defender.rank, CHALLENGE_RANGE)
-          : canChallengeUp(me.rank, defender.rank, CHALLENGE_RANGE);
+        if (me.id === defender.id) throw new Error("Je kunt jezelf niet uitdagen.");
+        const allowed = kind === "friendly"
+          ? true
+          : kind === "invite"
+            ? canInviteDown(me.rank, defender.rank, CHALLENGE_RANGE)
+            : canChallengeUp(me.rank, defender.rank, CHALLENGE_RANGE);
         if (!allowed) {
           throw new Error(
             kind === "invite"
@@ -114,7 +119,10 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         });
       },
       record: ({ leftId, rightId, leftScore, rightScore, note, challengeId }) => {
-        const settled = settleMatch(get().players, leftId, rightId, leftScore, rightScore);
+        const challenge = get().challenges.find((item) => item.id === challengeId);
+        const settled = challenge?.kind === "friendly"
+          ? friendlyResult(get().players, leftId, rightId, leftScore, rightScore)
+          : settleMatch(get().players, leftId, rightId, leftScore, rightScore);
         const matchId = crypto.randomUUID();
         set({
           players: settled.players,
@@ -308,6 +316,16 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         if (!players.some((player) => player.id === personaId)) throw new Error("Speler niet gevonden.");
         set({
           players: players.map((player) => (player.id === personaId ? { ...player, note: color } : player)),
+        });
+      },
+      loadBackup: ({ players, challenges, matches, personaId }) => {
+        if (!Array.isArray(players) || players.length === 0) throw new Error("Dit is geen piramide-backup.");
+        const nextPersona = players.some((player) => player.id === personaId) ? personaId : players[0]!.id;
+        set({
+          players,
+          challenges: Array.isArray(challenges) ? challenges : [],
+          matches: Array.isArray(matches) ? matches : [],
+          personaId: nextPersona,
         });
       },
     }),

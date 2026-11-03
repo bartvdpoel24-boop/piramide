@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronDown, ChevronUp, Copy, Crown, Minus, Plus, Share2, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, Crown, Minus, Plus, Share2, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   amsterdamDate,
@@ -16,11 +16,12 @@ import {
 } from "@/lib/pyramid/format";
 import { canChallengeUp, canInviteDown, isOnWall, isPyramidAdmin, legalDistance, overlapSlots, pyramidRows, reviseMatch, sameOutcome, settleGroup, settleMatch } from "@/lib/pyramid/rules";
 import { NOTE_BG } from "@/lib/pyramid/notes";
-import { currentStreaks, lastResults, type LastResult } from "@/lib/pyramid/stats";
+import { currentStreaks, headToHead, lastResults, playerResults, type LastResult } from "@/lib/pyramid/stats";
 import { joinMessage, joinUrl, seatMessage, whatsAppHref } from "@/lib/pyramid/share";
 import type { Challenge, Match, Player, Slot } from "@/lib/pyramid/types";
 import { cn } from "@/lib/cn";
 import { RackMark } from "./mark";
+import { WinPie } from "./stats-panel";
 import { Shell } from "./shell";
 
 type Tab = "piramide" | "uitslagen" | "uitdagingen" | "tijden" | "deelnemers";
@@ -44,7 +45,7 @@ export type LadderActions = {
     day: number | null;
     startMin: number | null;
     message: string;
-    kind: "challenge" | "invite";
+    kind: "challenge" | "invite" | "friendly";
     playOn: string | null;
   }) => Promise<{ mailed?: boolean; notify?: boolean } | void>;
   onRespond: (id: string, action: "accept" | "decline" | "cancel") => Promise<void>;
@@ -110,11 +111,12 @@ export function LadderScreen(props: Props) {
   const king = wall.find((player) => player.rank === 1) ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(isOnWall(me ?? { active: false }) ? me?.id ?? king?.id ?? null : king?.id ?? null);
   const [tab, setTab] = useState<Tab>("piramide");
-  const [approach, setApproach] = useState<{ id: string; kind: "challenge" | "invite" } | null>(null);
+  const [approach, setApproach] = useState<{ id: string; kind: "challenge" | "invite" | "friendly" } | null>(null);
+  const [listMode, setListMode] = useState(false);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
   const [pendingRemove, setPendingRemove] = useState<Player | null>(null);
   const [groupOpen, setGroupOpen] = useState(false);
-  const [onlyJoined, setOnlyJoined] = useState(false);
+  const [onlyJoined, setOnlyJoined] = useState(true);
   const joined = useMemo(() => wall.filter((player) => player.userId), [wall]);
   const visible = onlyJoined ? joined : wall;
   const rows = useMemo(() => pyramidRows(visible), [visible]);
@@ -260,6 +262,54 @@ export function LadderScreen(props: Props) {
             </button>
           </div>
 
+          {listMode && selected ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-end gap-2 border-b border-line pb-3">
+                <button type="button" className="btn btn-ghost h-10 min-h-0 text-sm" onClick={() => setListMode(false)}>
+                  Toon piramide
+                </button>
+              </div>
+              <div className="grid grid-cols-[minmax(7.5rem,0.9fr)_minmax(0,1.2fr)] items-start gap-3">
+                <ul className="flex max-h-[70vh] flex-col gap-1 overflow-y-auto py-1 pr-1">
+                  {visible.map((player) => (
+                    <li key={player.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(player.id)}
+                        className={cn(
+                          "flex min-h-11 w-full items-center gap-2 rounded-md border px-2 py-2 text-left text-sm",
+                          player.id === selected.id ? "border-brass bg-felt-deep" : "border-line bg-felt-deep/40",
+                        )}
+                      >
+                        <span className="w-7 shrink-0 text-right tabular-nums text-brass">{player.rank}</span>
+                        <span className="min-w-0 flex-1 truncate font-display italic">{player.name}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <PlayerPanel
+                  player={selected}
+                  me={me}
+                  range={challengeRange}
+                  amOwner={props.amOwner}
+                  players={wall}
+                  onChallenge={() => setApproach({ id: selected.id, kind: "challenge" })}
+                  onInvite={() => setApproach({ id: selected.id, kind: "invite" })}
+                  onFriendly={() => setApproach({ id: selected.id, kind: "friendly" })}
+                  onResult={(leftId, rightId, lockPair) => openResult(leftId, rightId, null, lockPair)}
+                  onNudge={
+                    props.onNudge
+                      ? (direction) => void run(() => props.onNudge?.(selected.id, direction))
+                      : undefined
+                  }
+                  onRemove={props.onRemove && isPyramidAdmin(me) ? () => setPendingRemove(selected) : undefined}
+                />
+              </div>
+              <PlayerScores player={selected} matches={matches} />
+              {me && me.id !== selected.id ? <Versus player={selected} me={me} matches={matches} /> : null}
+            </div>
+          ) : (
+            <>
           <PyramidBoard
             rows={rows}
             empty={visible.length === 0}
@@ -267,28 +317,13 @@ export function LadderScreen(props: Props) {
             meId={meId}
             latest={latest}
             streaks={streaks}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setListMode(true);
+            }}
           />
-
-          {selected ? (
-            <PlayerPanel
-              player={selected}
-              me={me}
-              range={challengeRange}
-              amOwner={props.amOwner}
-              players={wall}
-              onChallenge={() => setApproach({ id: selected.id, kind: "challenge" })}
-              onInvite={() => setApproach({ id: selected.id, kind: "invite" })}
-              onResult={(leftId, rightId, lockPair) => openResult(leftId, rightId, null, lockPair)}
-              onNudge={
-                props.onNudge
-                  ? (direction) => void run(() => props.onNudge?.(selected.id, direction))
-                  : undefined
-              }
-              onRemove={props.onRemove && isPyramidAdmin(me) ? () => setPendingRemove(selected) : undefined}
-            />
-          ) : (
-            <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
+          <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
+            </>
           )}
         </>
       ) : null}
@@ -363,6 +398,7 @@ export function LadderScreen(props: Props) {
           ladderName={props.name}
           onSelect={(id) => {
             setSelectedId(id);
+            setListMode(true);
             setTab("piramide");
           }}
           amOwner={props.amOwner}
@@ -390,13 +426,15 @@ export function LadderScreen(props: Props) {
             const mailed = Boolean(result && result.mailed);
             const notify = Boolean(result && result.notify);
             toast.success(
-              input.kind === "invite"
-                ? "Uitnodiging verstuurd."
-                : mailed
-                  ? "Uitdaging verstuurd. De mail is onderweg."
-                  : notify
-                    ? "Uitdaging verstuurd. De mail kon niet worden bezorgd."
-                    : "Uitdaging verstuurd.",
+              input.kind === "friendly"
+                ? "Uitnodiging voor vrij spelen verstuurd."
+                : input.kind === "invite"
+                  ? "Uitnodiging verstuurd."
+                  : mailed
+                    ? "Uitdaging verstuurd. De mail is onderweg."
+                    : notify
+                      ? "Uitdaging verstuurd. De mail kon niet worden bezorgd."
+                      : "Uitdaging verstuurd.",
             );
           })
         }
@@ -781,6 +819,100 @@ function ShareLadder({ name, code }: { name: string; code: string }) {
   );
 }
 
+function PlayerScores({ player, matches }: { player: Player; matches: Match[] }) {
+  const lines = playerResults(matches, player.id);
+  const wins = lines.filter((line) => line.result === "win").length;
+  const losses = lines.filter((line) => line.result === "loss").length;
+  const scored = lines.reduce((sum, line) => sum + line.mine, 0);
+  const conceded = lines.reduce((sum, line) => sum + line.theirs, 0);
+  return (
+    <section className="panel p-4">
+      <h2 className="font-display text-2xl italic">Scores van {player.name}</h2>
+      {lines.length === 0 ? (
+        <p className="mt-2 text-sm text-ivory-dim">Nog geen uitslagen.</p>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-3 gap-2 border-y border-line py-3 text-center">
+            <div>
+              <p className="font-display text-2xl italic">{wins}</p>
+              <p className="text-xs tracking-wide text-ivory-dim uppercase">Winst</p>
+            </div>
+            <div>
+              <p className="font-display text-2xl italic">{losses}</p>
+              <p className="text-xs tracking-wide text-ivory-dim uppercase">Verlies</p>
+            </div>
+            <div>
+              <p className="font-display text-2xl italic tabular-nums">{scored}–{conceded}</p>
+              <p className="text-xs tracking-wide text-ivory-dim uppercase">Score</p>
+            </div>
+          </div>
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {lines.map((line) => (
+              <li key={line.id} className="flex items-center gap-2 text-sm">
+                {line.result === "win" ? (
+                  <Check className="size-4 shrink-0 text-brass" aria-label="Winst" />
+                ) : line.result === "loss" ? (
+                  <X className="size-4 shrink-0 text-ivory-dim" aria-label="Verlies" />
+                ) : (
+                  <Minus className="size-4 shrink-0 text-ivory-dim" aria-label="Gelijkspel" />
+                )}
+                <span className="shrink-0 text-ivory-dim">{fmtWhen(line.playedAt)}</span>
+                <span className="shrink-0 font-display text-lg leading-none italic tabular-nums">{line.score}</span>
+                <span className="min-w-0 truncate">{line.against}</span>
+              </li>
+            ))}
+          </ul>
+          {wins + losses > 0 ? (
+            <div className="mt-5 border-t border-line pt-4">
+              <WinPie
+                rows={[
+                  { label: "Winst", value: wins, text: String(wins) },
+                  { label: "Verlies", value: losses, text: String(losses) },
+                ].filter((row) => row.value > 0)}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function Versus({ player, me, matches }: { player: Player; me: Player; matches: Match[] }) {
+  const compared = headToHead(matches, player.id, me.id);
+  let theirs = 0;
+  let mine = 0;
+  for (const line of compared.lines) {
+    if (line.left > line.right) theirs += 1;
+    else if (line.right > line.left) mine += 1;
+  }
+  return (
+    <section className="panel p-4">
+      <h2 className="font-display text-2xl italic">Head to head</h2>
+      <p className="mt-1 text-sm text-ivory-dim">
+        {player.name} tegen {me.name}
+      </p>
+      <p className="mt-3 font-display text-3xl italic tabular-nums">
+        {compared.leftTotal}–{compared.rightTotal}
+      </p>
+      {compared.lines.length === 0 ? (
+        <p className="mt-2 text-sm text-ivory-dim">Jullie hebben nog niet tegen elkaar gespeeld.</p>
+      ) : theirs + mine > 0 ? (
+        <div className="mt-4">
+          <WinPie
+            rows={[
+              { label: player.name, value: theirs, text: String(theirs) },
+              { label: me.name, value: mine, text: String(mine) },
+            ].filter((row) => row.value > 0)}
+          />
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-ivory-dim">Alleen gelijkspel.</p>
+      )}
+    </section>
+  );
+}
+
 function PlayerPanel({
   player,
   me,
@@ -789,6 +921,7 @@ function PlayerPanel({
   players,
   onChallenge,
   onInvite,
+  onFriendly,
   onResult,
   onNudge,
   onRemove,
@@ -800,12 +933,14 @@ function PlayerPanel({
   players: Player[];
   onChallenge: () => void;
   onInvite: () => void;
+  onFriendly: () => void;
   onResult: (leftId: string, rightId: string, lockPair: boolean) => void;
   onNudge?: (direction: -1 | 1) => void;
   onRemove?: () => void;
 }) {
   const upward = me ? canChallengeUp(me.rank, player.rank, range) : false;
   const downward = me ? canInviteDown(me.rank, player.rank, range) : false;
+  const tooFar = Boolean(me && player.id !== me.id && !upward && !downward);
   const betweenUs = me ? legalDistance(me.rank, player.rank, range) : false;
   const ownerOpponents = players.filter((other) => legalDistance(other.rank, player.rank, range));
   const places = me ? Math.abs(me.rank - player.rank) : 0;
@@ -813,37 +948,41 @@ function PlayerPanel({
   if (me && player.id === me.id) hint = "Dit ben jij. Anderen kunnen jou uitdagen als ze dichtbij genoeg staan.";
   else if (upward) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} boven je.`;
   else if (downward) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} onder je.`;
-  else if (me && player.rank < me.rank) hint = `${player.name} staat te ver boven je. Maximaal ${range} plaatsen.`;
-  else if (me && player.rank > me.rank) hint = `${player.name} staat te ver onder je. Uitnodigen kan tot ${range} plaatsen.`;
+  else if (tooFar) hint = `${player.name} staat te ver weg. Uitnodigen kan wel, om vrij te spelen. De piramide blijft staan.`;
 
   return (
-    <section className="panel mb-4 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="panel p-3">
+      <div className="flex flex-col gap-3">
         <div>
           <p className="text-xs tracking-widest text-brass uppercase">Plek {player.rank}</p>
-          <h2 className="font-display text-3xl italic">{player.name}</h2>
+          <h2 className="font-display text-2xl italic leading-tight">{player.name}</h2>
           <p className="text-sm text-ivory-dim">{hint}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {upward ? (
-            <button type="button" className="btn btn-brass" onClick={onChallenge}>
+            <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onChallenge}>
               Uitdagen
             </button>
           ) : null}
           {downward ? (
-            <button type="button" className="btn btn-brass" onClick={onInvite}>
+            <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onInvite}>
+              Uitnodigen
+            </button>
+          ) : null}
+          {tooFar ? (
+            <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onFriendly}>
               Uitnodigen
             </button>
           ) : null}
           {me && betweenUs ? (
-            <button type="button" className="btn btn-ivory" onClick={() => onResult(me.id, player.id, true)}>
+            <button type="button" className="btn btn-ivory h-10 min-h-0 text-sm" onClick={() => onResult(me.id, player.id, true)}>
               Uitslag
             </button>
           ) : null}
           {amOwner && ownerOpponents[0] && !(me && betweenUs) ? (
             <button
               type="button"
-              className="btn btn-ivory"
+              className="btn btn-ivory h-10 min-h-0 text-sm"
               onClick={() => onResult(player.id, ownerOpponents[0]!.id, false)}
             >
               Uitslag invoeren
@@ -922,9 +1061,11 @@ function ChallengeList({
         return (
           <li key={challenge.id} className="panel p-4">
             <p className="font-display text-xl italic">
-              {(challenge.kind ?? "challenge") === "invite"
-                ? `${name(challenge.challengerId)} nodigt ${name(challenge.defenderId)} uit`
-                : `${name(challenge.challengerId)} daagt ${name(challenge.defenderId)} uit`}
+              {challenge.kind === "friendly"
+                ? `${name(challenge.challengerId)} nodigt ${name(challenge.defenderId)} uit om vrij te spelen`
+                : challenge.kind === "invite"
+                  ? `${name(challenge.challengerId)} nodigt ${name(challenge.defenderId)} uit`
+                  : `${name(challenge.challengerId)} daagt ${name(challenge.defenderId)} uit`}
             </p>
             <p className="text-sm text-ivory-dim">
               {challengeWhen(challenge)} · {labelStatus(challenge.status)}
@@ -1085,7 +1226,7 @@ function PlayersTab({
   mode: "demo" | "live";
 }) {
   const [name, setName] = useState("");
-  const [onlyJoined, setOnlyJoined] = useState(false);
+  const [onlyJoined, setOnlyJoined] = useState(true);
   const shown = onlyJoined ? players.filter((player) => player.userId) : players;
   return (
     <div className="flex flex-col gap-3">
@@ -1193,14 +1334,14 @@ function ChallengeDialog({
 }: {
   defender: Player | null;
   me: Player | null;
-  kind: "challenge" | "invite";
+  kind: "challenge" | "invite" | "friendly";
   onClose: () => void;
   onSubmit: (input: {
     defenderId: string;
     day: number | null;
     startMin: number | null;
     message: string;
-    kind: "challenge" | "invite";
+    kind: "challenge" | "invite" | "friendly";
     playOn: string | null;
   }) => void;
 }) {
@@ -1221,10 +1362,16 @@ function ChallengeDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-felt-deep/80" />
         <Dialog.Content className="sheet">
           <Dialog.Title className="font-display text-3xl italic">
-            {kind === "invite" ? `Nodig ${defender?.name} uit` : `Daag ${defender?.name} uit`}
+            {kind === "friendly"
+              ? `Vrij spelen met ${defender?.name}`
+              : kind === "invite"
+                ? `Nodig ${defender?.name} uit`
+                : `Daag ${defender?.name} uit`}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-ink/70">
-            Spreek een moment af, of laat het open. Na de partij vul je de uitslag in.
+            {kind === "friendly"
+              ? "Te ver voor een uitdaging. De uitslag telt mee, de piramide blijft staan."
+              : "Spreek een moment af, of laat het open. Na de partij vul je de uitslag in."}
           </Dialog.Description>
           <form
             className="mt-4 flex flex-col gap-3"
@@ -1261,9 +1408,11 @@ function ChallengeDialog({
               </fieldset>
             ) : (
               <p className="text-sm text-ink/70">
-                {kind === "invite"
-                  ? "Geen overlappende tijden. Nodig toch uit en spreek het zelf af."
-                  : "Geen overlappende tijden. Daag toch uit en spreek het zelf af."}
+                {kind === "friendly"
+                  ? "Geen verplichte tijd. Spreek het zelf af."
+                  : kind === "invite"
+                    ? "Geen overlappende tijden. Nodig toch uit en spreek het zelf af."
+                    : "Geen overlappende tijden. Daag toch uit en spreek het zelf af."}
               </p>
             )}
             <label className="flex flex-col gap-1 text-sm">

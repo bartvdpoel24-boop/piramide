@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, canInviteDown, cleanName, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
+import { canChallengeUp, canInviteDown, cleanName, friendlyResult, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
 import { challengeMail, cleanEmail } from "./email";
 import { challengeWhen } from "./format";
 import { monthWinShare } from "./stats";
@@ -17,6 +17,7 @@ import {
   type InvitePreview,
   type LadderSnapshot,
   type LadderSummary,
+  type Match,
   type NoteColor,
   type Player,
   type Slot,
@@ -153,6 +154,12 @@ async function lapseChallenges(sql: Sql, ladderId?: string) {
   `;
 }
 
+function asKind(value: string | null): "challenge" | "invite" | "friendly" {
+  if (value === "invite") return "invite";
+  if (value === "friendly") return "friendly";
+  return "challenge";
+}
+
 function asDay(value: unknown) {
   if (value == null || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
@@ -219,7 +226,7 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
       challengerId: row.challenger_id,
       defenderId: row.defender_id,
       status: row.status,
-      kind: row.kind === "invite" ? "invite" : "challenge",
+      kind: asKind(row.kind),
       proposedDay: row.proposed_day == null ? null : Number(row.proposed_day),
       proposedStartMin: row.proposed_start_min == null ? null : Number(row.proposed_start_min),
       playOn: asDay(row.play_on),
@@ -398,7 +405,7 @@ export const homeFeed = createServerFn({ method: "GET" })
         challengerName: row.challenger_name,
         defenderName: row.defender_name,
         status: row.status,
-        kind: row.kind === "invite" ? "invite" : "challenge",
+        kind: asKind(row.kind),
         createdAt: iso(row.created_at),
       })),
       matches: matches.map((row) => ({
@@ -653,7 +660,7 @@ export const setNoteColor = createServerFn({ method: "POST" })
 export const sendChallengeNotice = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(
-    (input: { to?: string; challenger?: string; ladder?: string; when?: string; message?: string }) => {
+    (input: { to?: string; challenger?: string; ladder?: string; when?: string; message?: string; free?: boolean }) => {
       const to = cleanEmail(String(input?.to ?? ""));
       if (!to) throw new Error("Er is geen e-mailadres.");
       return {
@@ -662,6 +669,7 @@ export const sendChallengeNotice = createServerFn({ method: "POST" })
         ladder: String(input?.ladder ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || "Piramide",
         when: String(input?.when ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
         message: String(input?.message ?? "").trim().slice(0, 140),
+        free: Boolean(input?.free),
       };
     },
   )
@@ -687,7 +695,7 @@ export const createChallenge = createServerFn({ method: "POST" })
       const day = input.day == null ? null : Number(input.day);
       const startMin = input.startMin == null ? null : Number(input.startMin);
       if ((day == null) !== (startMin == null)) throw new Error("Dag en tijd horen bij elkaar.");
-      const kind = input.kind === "invite" ? "invite" : "challenge";
+      const kind = input.kind === "invite" ? "invite" : input.kind === "friendly" ? "friendly" : "challenge";
       return {
         ladderId: String(input.ladderId),
         defenderId: String(input.defenderId),
@@ -707,9 +715,12 @@ export const createChallenge = createServerFn({ method: "POST" })
     const me = players.find((player) => player.id === access.meId);
     const defender = players.find((player) => player.id === data.defenderId);
     if (!me || !defender) throw new Error("Speler niet gevonden.");
-    const allowed = data.kind === "invite"
-      ? canInviteDown(me.rank, defender.rank, access.range)
-      : canChallengeUp(me.rank, defender.rank, access.range);
+    if (me.id === defender.id) throw new Error("Je kunt jezelf niet uitdagen.");
+    const allowed = data.kind === "friendly"
+      ? true
+      : data.kind === "invite"
+        ? canInviteDown(me.rank, defender.rank, access.range)
+        : canChallengeUp(me.rank, defender.rank, access.range);
     if (!allowed) {
       throw new Error(
         data.kind === "invite"
@@ -737,7 +748,7 @@ export const createChallenge = createServerFn({ method: "POST" })
       )
     `;
     let mailed = false;
-    if (data.kind === "challenge" && defender.email) {
+    if ((data.kind === "challenge" || data.kind === "friendly") && defender.email) {
       const mail = challengeMail({
         to: defender.email,
         challenger: me.name,
@@ -748,6 +759,7 @@ export const createChallenge = createServerFn({ method: "POST" })
           playOn: data.playOn,
         }),
         message: data.message,
+        free: data.kind === "friendly",
       });
       const { deliverChallengeMail } = await import("./email.server");
       mailed = await deliverChallengeMail(mail);
@@ -834,8 +846,8 @@ export const recordResult = createServerFn({ method: "POST" })
     const involved = left.userId === context.userId || right.userId === context.userId;
     if (!involved && !access.amOwner) throw new Error("Alleen de spelers of de beheerder vullen de uitslag in.");
     if (data.challengeId) {
-      const rows = await sql<{ challenger_id: string; defender_id: string; status: string }>`
-        select challenger_id, defender_id, status from ladder_challenges
+      const rows = await sql<{ challenger_id: string; defender_id: string; status: string; kind: string | null }>`
+        select challenger_id, defender_id, status, kind from ladder_challenges
         where id = ${data.challengeId} and ladder_id = ${data.ladderId}
       `;
       const challenge = rows[0];
@@ -845,6 +857,28 @@ export const recordResult = createServerFn({ method: "POST" })
       }
       const ids = new Set([challenge.challenger_id, challenge.defender_id]);
       if (!ids.has(left.id) || !ids.has(right.id)) throw new Error("De uitslag hoort niet bij deze uitdaging.");
+      if (challenge.kind === "friendly") {
+        const settled = friendlyResult(players, left.id, right.id, data.leftScore, data.rightScore);
+        await sql`
+          insert into ladder_matches (
+            id, ladder_id, challenge_id, winner_id, loser_id, winner_name, loser_name,
+            winner_score, loser_score, winner_rank_before, loser_rank_before,
+            swapped, stip_awarded, played_at, note, recorded_by
+          ) values (
+            ${crypto.randomUUID()}, ${data.ladderId}, ${data.challengeId},
+            ${settled.winnerId}, ${settled.loserId}, ${settled.winnerName}, ${settled.loserName},
+            ${settled.winnerScore}, ${settled.loserScore}, ${settled.winnerRankBefore}, ${settled.loserRankBefore},
+            ${false}, ${false}, now(), ${data.note}, ${context.userId}
+          )
+        `;
+        await sql`update ladder_challenges set status = 'played' where id = ${data.challengeId}`;
+        return {
+          swapped: false,
+          stipAwarded: false,
+          draw: settled.draw,
+          winnerName: settled.winnerName,
+        };
+      }
     }
     const settled = settleMatch(players, left.id, right.id, data.leftScore, data.rightScore, access.range);
     if (settled.swapped) {
@@ -1150,4 +1184,146 @@ export const addLadderPlayer = createServerFn({ method: "POST" })
     `;
     return { ok: true };
   });
+
+export const databaseStatus = createServerFn({ method: "GET" }).handler(async () => {
+  const raw = process.env.DATABASE_URL?.trim() ?? "";
+  if (!raw) return { source: "pglite" as const, host: null, database: null, user: null, ssl: null };
+  try {
+    const url = new URL(raw);
+    return {
+      source: "neon" as const,
+      host: url.hostname || null,
+      database: decodeURIComponent(url.pathname.replace(/^\//, "")) || null,
+      user: decodeURIComponent(url.username || "") || null,
+      ssl: url.searchParams.get("sslmode"),
+    };
+  } catch {
+    return { source: "neon" as const, host: null, database: null, user: null, ssl: null };
+  }
+});
+
+export const exportLadderBackup = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .validator((ladderId: string) => {
+    if (!ladderId) throw new Error("Ladder ontbreekt.");
+    return String(ladderId);
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    const access = await requireLadder(sql, context.userId, data);
+    if (!access.amOwner) throw new Error("Alleen de beheerder maakt een backup.");
+    const snap = await snapshot(sql, context.userId, data);
+    const players = await loadPlayers(sql, data, true);
+    return {
+      kind: "piramide-backup" as const,
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      ladder: { id: snap.id, name: snap.name, inviteCode: snap.inviteCode, challengeRange: snap.challengeRange },
+      players,
+      challenges: snap.challenges,
+      matches: snap.matches,
+    };
+  });
+
+export const restoreLadderBackup = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: {
+    ladderId?: string;
+    backup?: {
+      kind?: string;
+      ladder?: { id?: string };
+      players?: Player[];
+      challenges?: Challenge[];
+      matches?: Match[];
+    };
+  }) => {
+    if (!input?.ladderId || input.backup?.kind !== "piramide-backup") throw new Error("Dit is geen piramide-backup.");
+    if (!Array.isArray(input.backup.players)) throw new Error("De backup heeft geen deelnemers.");
+    return { ladderId: String(input.ladderId), backup: input.backup };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    const access = await requireLadder(sql, context.userId, data.ladderId);
+    if (!access.amOwner) throw new Error("Alleen de beheerder zet een backup terug.");
+    if (data.backup.ladder?.id && data.backup.ladder.id !== data.ladderId) {
+      throw new Error("Deze backup hoort bij een andere piramide.");
+    }
+    const current = await loadPlayers(sql, data.ladderId, true);
+    const ids = new Set(current.map((player) => player.id));
+    const incoming = data.backup.players ?? [];
+    if (incoming.length !== current.length || incoming.some((player) => !ids.has(player.id))) {
+      throw new Error("Deze backup hoort niet bij deze piramide.");
+    }
+    const next = current.map((player) => {
+      const saved = incoming.find((item) => item.id === player.id)!;
+      let email = "";
+      try {
+        email = saved.email ? cleanEmail(String(saved.email)) : "";
+      } catch {
+        email = "";
+      }
+      return {
+        ...player,
+        name: cleanName(saved.name || player.name),
+        rank: Number(saved.rank) || player.rank,
+        stippen: Math.max(0, Number(saved.stippen) || 0),
+        note: asNoteColor(saved.note),
+        active: saved.active !== false,
+        email,
+        availability: Array.isArray(saved.availability) ? normalizeSlots(saved.availability) : player.availability,
+      };
+    });
+    await writeRoster(sql, data.ladderId, next);
+    for (const player of next) {
+      await sql`
+        update ladder_players
+        set display_name = ${player.name}, note_color = ${player.note}, notify_email = ${player.email}
+        where id = ${player.id} and ladder_id = ${data.ladderId}
+      `;
+      await sql`delete from ladder_availability where player_id = ${player.id}`;
+      for (const slot of player.availability) {
+        await sql`
+          insert into ladder_availability (id, player_id, day, start_min, end_min)
+          values (${crypto.randomUUID()}, ${player.id}, ${slot.day}, ${slot.startMin}, ${slot.endMin})
+        `;
+      }
+    }
+    await sql`delete from ladder_matches where ladder_id = ${data.ladderId}`;
+    await sql`delete from ladder_challenges where ladder_id = ${data.ladderId}`;
+    for (const challenge of data.backup.challenges ?? []) {
+      if (!ids.has(challenge.challengerId) || !ids.has(challenge.defenderId)) continue;
+      const status = ["open", "accepted", "declined", "played", "cancelled", "expired"].includes(challenge.status)
+        ? challenge.status
+        : "cancelled";
+      const kind = challenge.kind === "invite" || challenge.kind === "friendly" ? challenge.kind : "challenge";
+      await sql`
+        insert into ladder_challenges (
+          id, ladder_id, challenger_id, defender_id, status, kind, proposed_day, proposed_start_min, play_on, message, created_by, created_at
+        ) values (
+          ${challenge.id || crypto.randomUUID()}, ${data.ladderId}, ${challenge.challengerId}, ${challenge.defenderId},
+          ${status}, ${kind}, ${challenge.proposedDay}, ${challenge.proposedStartMin}, ${challenge.playOn},
+          ${String(challenge.message ?? "").slice(0, 140)}, ${context.userId}, ${challenge.createdAt || new Date().toISOString()}
+        )
+      `;
+    }
+    for (const match of data.backup.matches ?? []) {
+      await sql`
+        insert into ladder_matches (
+          id, ladder_id, challenge_id, winner_id, loser_id, winner_name, loser_name,
+          winner_score, loser_score, winner_rank_before, loser_rank_before,
+          swapped, stip_awarded, played_at, note, recorded_by, sides
+        ) values (
+          ${match.id || crypto.randomUUID()}, ${data.ladderId}, ${match.challengeId},
+          ${match.winnerId}, ${match.loserId}, ${match.winnerName}, ${match.loserName},
+          ${Number(match.winnerScore) || 0}, ${Number(match.loserScore) || 0},
+          ${Number(match.winnerRankBefore) || 0}, ${Number(match.loserRankBefore) || 0},
+          ${Boolean(match.swapped)}, ${Boolean(match.stipAwarded)}, ${match.playedAt},
+          ${String(match.note ?? "").slice(0, 140)}, ${context.userId},
+          ${match.sides ? JSON.stringify(match.sides) : null}::jsonb
+        )
+      `;
+    }
+    return { ok: true };
+  });
+
 

@@ -15,6 +15,42 @@ export function canInviteDown(fromRank: number, targetRank: number, range = CHAL
   return targetRank > fromRank && targetRank - fromRank <= range;
 }
 
+/** A friendly invite ignores the ladder distance. The cards do not move. */
+export function friendlyResult(
+  players: Player[],
+  leftId: string,
+  rightId: string,
+  leftScore: number,
+  rightScore: number,
+): SettleResult {
+  if (!Number.isInteger(leftScore) || !Number.isInteger(rightScore)) throw new Error("Vul hele punten in.");
+  if (leftScore < 0 || rightScore < 0 || leftScore > 15 || rightScore > 15) {
+    throw new Error("De score ligt tussen 0 en 15.");
+  }
+  if (leftId === rightId) throw new Error("Kies twee verschillende spelers.");
+  const left = players.find((player) => player.id === leftId && isOnWall(player));
+  const right = players.find((player) => player.id === rightId && isOnWall(player));
+  if (!left || !right) throw new Error("Speler niet gevonden.");
+  const draw = leftScore === rightScore;
+  const leftWins = leftScore > rightScore || (draw && left.rank <= right.rank);
+  const winner = leftWins ? left : right;
+  const loser = leftWins ? right : left;
+  return {
+    winnerId: winner.id,
+    loserId: loser.id,
+    winnerName: winner.name,
+    loserName: loser.name,
+    winnerScore: leftWins ? leftScore : rightScore,
+    loserScore: leftWins ? rightScore : leftScore,
+    winnerRankBefore: winner.rank,
+    loserRankBefore: loser.rank,
+    swapped: false,
+    stipAwarded: false,
+    draw,
+    players,
+  };
+}
+
 const ADMIN_NAME = "bart van der poel";
 
 /** The office admin is Bart van der Poel. The demo card keeps that role after a rename. */

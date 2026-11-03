@@ -33,12 +33,14 @@ export type Player = {
 
 export type ChallengeStatus = "open" | "accepted" | "declined" | "played" | "cancelled" | "expired";
 
+export type ChallengeKind = "challenge" | "invite" | "friendly";
+
 export type Challenge = {
   id: string;
   challengerId: string;
   defenderId: string;
   status: ChallengeStatus;
-  kind: "challenge" | "invite";
+  kind: ChallengeKind;
   proposedDay: number | null;
   proposedStartMin: number | null;
   playOn: string | null;
@@ -102,7 +104,7 @@ export type HomeChallenge = {
   challengerName: string;
   defenderName: string;
   status: ChallengeStatus;
-  kind: "challenge" | "invite";
+  kind: ChallengeKind;
   createdAt: string;
 };
 

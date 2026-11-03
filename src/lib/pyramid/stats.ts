@@ -69,6 +69,88 @@ export function monthWinShare(
     .map(([label, value]) => ({ label, value, text: String(value) }));
 }
 
+export type HeadLine = { id: string; playedAt: string; left: number; right: number; note: string };
+
+export function headToHead(matches: Match[], leftId: string, rightId: string) {
+  const lines: HeadLine[] = [];
+  let leftTotal = 0;
+  let rightTotal = 0;
+  const ordered = [...matches].sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime());
+  for (const match of ordered) {
+    const pair = pairScores(match, leftId, rightId);
+    if (!pair) continue;
+    lines.push({ id: match.id, playedAt: match.playedAt, left: pair.left, right: pair.right, note: match.note });
+    leftTotal += pair.left;
+    rightTotal += pair.right;
+  }
+  return { lines, leftTotal, rightTotal };
+}
+
+function pairScores(match: Match, leftId: string, rightId: string) {
+  if (match.sides && match.sides.length >= 2) {
+    const left = match.sides.find((side) => side.id === leftId);
+    const right = match.sides.find((side) => side.id === rightId);
+    if (!left || !right) return null;
+    return { left: left.score, right: right.score };
+  }
+  const ids = [match.winnerId, match.loserId];
+  if (!ids.includes(leftId) || !ids.includes(rightId)) return null;
+  return {
+    left: match.winnerId === leftId ? match.winnerScore : match.loserScore,
+    right: match.winnerId === rightId ? match.winnerScore : match.loserScore,
+  };
+}
+
+export function playerResults(matches: Match[], playerId: string) {
+  const ordered = [...matches].sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime());
+  const lines: {
+    id: string;
+    playedAt: string;
+    score: string;
+    against: string;
+    result: "win" | "loss" | "draw";
+    mine: number;
+    theirs: number;
+  }[] = [];
+  for (const match of ordered) {
+    if (match.sides && match.sides.length > 2) {
+      const mine = match.sides.find((side) => side.id === playerId);
+      if (!mine) continue;
+      const others = match.sides.filter((side) => side.id !== playerId);
+      const best = Math.max(...match.sides.map((side) => side.score));
+      const leaders = match.sides.filter((side) => side.score === best).length;
+      const result = mine.score < best ? "loss" : leaders === 1 ? "win" : "draw";
+      const theirs = Math.max(0, ...others.map((side) => side.score));
+      lines.push({
+        id: match.id,
+        playedAt: match.playedAt,
+        score: `${mine.score}–${theirs}`,
+        against: others.map((side) => side.name).join(", "),
+        result,
+        mine: mine.score,
+        theirs,
+      });
+      continue;
+    }
+    const mine = match.winnerId === playerId || match.loserId === playerId;
+    if (!mine) continue;
+    const opponent = match.winnerId === playerId ? match.loserName : match.winnerName;
+    const mineScore = match.winnerId === playerId ? match.winnerScore : match.loserScore;
+    const theirs = match.winnerId === playerId ? match.loserScore : match.winnerScore;
+    const result = mineScore === theirs ? "draw" : mineScore > theirs ? "win" : "loss";
+    lines.push({
+      id: match.id,
+      playedAt: match.playedAt,
+      score: `${mineScore}–${theirs}`,
+      against: opponent,
+      result,
+      mine: mineScore,
+      theirs,
+    });
+  }
+  return lines;
+}
+
 export function currentStreaks(matches: Match[]) {
   return walkStreaks(matches).current;
 }

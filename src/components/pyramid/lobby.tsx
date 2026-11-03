@@ -60,9 +60,11 @@ function DemoActivity() {
         id: item.id,
         ladderId: null,
         title:
-          item.kind === "invite"
-            ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit`
-            : `${name(item.challengerId)} daagt ${name(item.defenderId)} uit`,
+          item.kind === "friendly"
+            ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit om vrij te spelen`
+            : item.kind === "invite"
+              ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit`
+              : `${name(item.challengerId)} daagt ${name(item.defenderId)} uit`,
         detail: `${item.status === "accepted" ? "afgesproken" : "open"} · ${challengeWhen(item)}`,
       }))}
       matches={matches.slice(0, 4).map((item) => ({
@@ -240,9 +242,11 @@ function SignedIn() {
           id: item.id,
           ladderId: item.ladderId,
           title:
-            item.kind === "invite"
-              ? `${item.challengerName} nodigt ${item.defenderName} uit`
-              : `${item.challengerName} daagt ${item.defenderName} uit`,
+            item.kind === "friendly"
+              ? `${item.challengerName} nodigt ${item.defenderName} uit om vrij te spelen`
+              : item.kind === "invite"
+                ? `${item.challengerName} nodigt ${item.defenderName} uit`
+                : `${item.challengerName} daagt ${item.defenderName} uit`,
           detail: `${item.ladderName} · ${item.status === "accepted" ? "afgesproken" : "open"}`,
         }))}
         matches={(feed?.matches ?? []).map((item) => ({
