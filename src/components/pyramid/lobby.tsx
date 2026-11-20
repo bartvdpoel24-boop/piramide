@@ -234,12 +234,20 @@ function SignedIn() {
   }, []);
 
   useEffect(() => {
+    if (ladders?.length !== 1) return;
+    void navigate({ to: "/ladder/$id", params: { id: ladders[0]!.id }, replace: true });
+  }, [ladders, navigate]);
+
+  useEffect(() => {
+    if (ladders?.length === 1) return;
     if ((ladders !== null || error) && (feed !== null || error)) {
       setBoot({ progress: 100, ready: true });
       return;
     }
     if (ladders !== null || feed !== null) setBoot({ progress: 84 });
   }, [ladders, feed, error]);
+
+  if (ladders?.length === 1) return <div className="panel h-40 animate-pulse" />;
 
   return (
     <div className="flex flex-col gap-4">

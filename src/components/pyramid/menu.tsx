@@ -11,8 +11,10 @@ import { cn } from "@/lib/cn";
 import { NOTE_BG, NOTE_LABEL } from "@/lib/pyramid/notes";
 import { NOTE_COLORS, type Challenge, type Match, type NoteColor, type Player, type Slot } from "@/lib/pyramid/types";
 import { pyramidStats, headToHead } from "@/lib/pyramid/stats";
+import { isOnWall } from "@/lib/pyramid/rules";
 import { fmtWhen } from "@/lib/pyramid/format";
 import { StatsPanel } from "./stats-panel";
+import { TimesBoard } from "./times-board";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
 import type { LadderSummary } from "@/lib/pyramid/types";
 import { AvailabilityForm } from "./availability-form";
@@ -20,7 +22,7 @@ import { CreateForm } from "./create-form";
 import { ELO_K, ELO_START, eloDeltas, fmtEloDelta } from "@/lib/pyramid/elo";
 import { VERSION, RELEASES } from "@/lib/pyramid/version";
 
-type View = "main" | "create" | "settings" | "stats" | "h2h" | "info" | "regels" | "versie";
+type View = "main" | "create" | "settings" | "stats" | "h2h" | "tijden" | "info" | "regels" | "versie";
 
 const subscribeNothing = () => () => {};
 
@@ -74,7 +76,9 @@ export function AppMenu() {
                     ? "Statistieken"
                     : view === "h2h"
                       ? "Head to head"
-                      : view === "info"
+                      : view === "tijden"
+                        ? "Tijden"
+                        : view === "info"
                         ? "Info"
                         : view === "regels"
                           ? "Poolregels"
@@ -121,6 +125,9 @@ export function AppMenu() {
               <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("settings")}>
                 Instellingen
               </button>
+              <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("tijden")}>
+                Tijden
+              </button>
               <button type="button" className="btn btn-ghost w-full justify-start" onClick={() => setView("stats")}>
                 Statistieken
               </button>
@@ -153,6 +160,7 @@ export function AppMenu() {
           {view === "settings" ? <SettingsBody demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
           {view === "stats" ? <StatsBody demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
           {view === "h2h" ? <HeadToHead demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
+          {view === "tijden" ? <TimesBody demo={demo} ladderId={ladderId} signedIn={signedIn} /> : null}
           {view === "info" ? <InfoBody /> : null}
           {view === "regels" ? <RulesBody /> : null}
           {view === "versie" ? <VersionBody /> : null}
@@ -425,6 +433,43 @@ function StatsBody({
   if (!live || !matches) return <div className="panel h-24 animate-pulse" />;
   if (!ladderId && !signedIn) return <p className="text-sm text-ivory-dim">Open een piramide om de statistieken te zien.</p>;
   return <StatsPanel stats={pyramidStats(live, matches)} />;
+}
+
+function TimesBody({
+  demo,
+  ladderId,
+  signedIn,
+}: {
+  demo: boolean;
+  ladderId: string | null;
+  signedIn: boolean;
+}) {
+  const demoPlayers = useDemoStore((state) => state.players);
+  const [players, setPlayers] = useState<Player[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (demo) return;
+    if (!ladderId || !signedIn) return;
+    let active = true;
+    getLadder({ data: ladderId })
+      .then((snapshot) => {
+        if (active) setPlayers(snapshot.players.filter(isOnWall));
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorText(reason));
+      });
+    return () => {
+      active = false;
+    };
+  }, [demo, ladderId, signedIn]);
+
+  if (demo) return <TimesBoard players={demoPlayers.filter(isOnWall)} />;
+  if (!ladderId) return <p className="text-sm text-ivory-dim">Open een piramide om de tijden te zien.</p>;
+  if (!signedIn) return <SignedOutNote />;
+  if (error) return <p className="text-sm text-brass">{error}</p>;
+  if (!players) return <div className="panel h-24 animate-pulse" />;
+  return <TimesBoard players={players} />;
 }
 
 function SettingsBody({

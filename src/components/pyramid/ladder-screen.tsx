@@ -7,18 +7,15 @@ import {
   amsterdamDate,
   amsterdamTime,
   challengeWhen,
-  DAYS_LONG,
-  fmtMin,
   fmtSlot,
   fmtWhen,
   isChallengeExpired,
   matchSummary,
-  todayDayIndex,
 } from "@/lib/pyramid/format";
 import { canChallengeUp, isOnWall, isPyramidAdmin, overlapSlots, pyramidRows, reviseMatch, sameOutcome, scoreMatch, settleGroup } from "@/lib/pyramid/rules";
 import { NOTE_BG } from "@/lib/pyramid/notes";
 import { eloDeltas, eloRatings, ELO_START, fmtEloDelta } from "@/lib/pyramid/elo";
-import { currentStreaks, headToHead, lastResults, playerResults, type LastResult } from "@/lib/pyramid/stats";
+import { currentStreaks, currentMonthLabel, headToHead, lastResults, monthWinShare, playerResults, type LastResult } from "@/lib/pyramid/stats";
 import { joinMessage, joinUrl, seatMessage, whatsAppHref } from "@/lib/pyramid/share";
 import type { Challenge, Match, Player, Slot } from "@/lib/pyramid/types";
 import { cn } from "@/lib/cn";
@@ -26,7 +23,7 @@ import { RackMark } from "./mark";
 import { WinPie } from "./stats-panel";
 import { Shell } from "./shell";
 
-type Tab = "piramide" | "uitslagen" | "uitdagingen" | "tijden" | "deelnemers";
+type Tab = "home" | "piramide" | "uitslagen" | "uitdagingen" | "deelnemers";
 
 type ResultDraft = {
   leftId: string;
@@ -112,6 +109,77 @@ function resultToast(result: { swapped: boolean; stipAwarded: boolean; draw: boo
   return `${result.winnerName} wint. De piramide blijft staan.`;
 }
 
+function HomeTab({
+  matches,
+  challenges,
+  players,
+  onOpen,
+}: {
+  matches: Match[];
+  challenges: Challenge[];
+  players: Player[];
+  onOpen: (tab: "uitdagingen" | "uitslagen") => void;
+}) {
+  const name = (id: string) => players.find((player) => player.id === id)?.name ?? "Onbekend";
+  const recent = [...matches]
+    .sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime())
+    .slice(0, 6);
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="flex flex-col gap-2">
+        <h2 className="font-display text-2xl italic">Winsten in {currentMonthLabel()}</h2>
+        <WinPie rows={monthWinShare(matches)} empty="Deze maand nog geen winst." />
+      </section>
+      <section className="flex flex-col gap-2">
+        <button type="button" className="self-start font-display text-2xl italic" onClick={() => onOpen("uitdagingen")}>
+          Uitdagingen
+        </button>
+        {challenges.length === 0 ? (
+          <p className="panel p-4 text-sm text-ivory-dim">Geen open uitdagingen.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {challenges.map((item) => (
+              <li key={item.id}>
+                <button type="button" className="panel block w-full p-4 text-left" onClick={() => onOpen("uitdagingen")}>
+                  <span className="font-display block text-xl italic">
+                    {item.kind === "friendly"
+                      ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit om vrij te spelen`
+                      : item.kind === "invite"
+                        ? `${name(item.challengerId)} nodigt ${name(item.defenderId)} uit`
+                        : `${name(item.challengerId)} daagt ${name(item.defenderId)} uit`}
+                  </span>
+                  <span className="text-sm text-ivory-dim">
+                    {item.status === "accepted" ? "afgesproken" : "open"} · {challengeWhen(item)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="flex flex-col gap-2">
+        <button type="button" className="self-start font-display text-2xl italic" onClick={() => onOpen("uitslagen")}>
+          Laatste uitslagen
+        </button>
+        {recent.length === 0 ? (
+          <p className="panel p-4 text-sm text-ivory-dim">Nog geen uitslagen.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {recent.map((item) => (
+              <li key={item.id}>
+                <button type="button" className="panel block w-full p-4 text-left" onClick={() => onOpen("uitslagen")}>
+                  <span className="font-display block text-xl italic">{matchSummary(item)}</span>
+                  <span className="text-sm text-ivory-dim">{fmtWhen(item.playedAt)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export function LadderScreen(props: Props) {
   const { players, meId, challengeRange, challenges, matches } = props;
   const wall = useMemo(() => players.filter((player) => isOnWall(player)), [players]);
@@ -119,7 +187,7 @@ export function LadderScreen(props: Props) {
   const me = players.find((player) => player.id === meId) ?? null;
   const king = wall.find((player) => player.rank === 1) ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(isOnWall(me ?? { active: false }) ? me?.id ?? king?.id ?? null : king?.id ?? null);
-  const [tab, setTab] = useState<Tab>("piramide");
+  const [tab, setTab] = useState<Tab>("home");
   const [approach, setApproach] = useState<{ id: string; kind: "challenge" | "invite" | "friendly" } | null>(null);
   const [listMode, setListMode] = useState(false);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
@@ -156,8 +224,6 @@ export function LadderScreen(props: Props) {
   const active = challengesNow.filter((item) => item.status === "open" || item.status === "accepted");
   const todayKey = amsterdamDate();
   const freshResults = matches.filter((match) => amsterdamDate(match.playedAt) === todayKey);
-  const today = todayDayIndex();
-  const freeToday = wall.filter((player) => player.availability.some((slot) => slot.day === today));
 
   async function run(action: () => Promise<unknown> | unknown, success?: string) {
     try {
@@ -224,50 +290,48 @@ export function LadderScreen(props: Props) {
         </label>
       ) : null}
 
-      <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-felt px-2 py-2">
-        <div className="grid grid-cols-5 items-start gap-1" role="tablist" aria-label="Onderdelen">
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-felt px-2 pt-2 pb-[max(0.4rem,env(safe-area-inset-bottom))]"
+        role="tablist"
+        aria-label="Onderdelen"
+      >
+        <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
           {(
             [
+              ["home", "Home"],
               ["piramide", "Piramide"],
               ["uitslagen", "Uitslagen"],
               ["uitdagingen", "Uitdagingen"],
-              ["tijden", "Tijden"],
               ["deelnemers", "Deelnemers"],
             ] as const
           ).map(([id, label]) => (
-            <div key={id} className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => setTab(id)}
-                className={cn("btn tab-tile", tab === id ? "btn-brass" : "btn-ghost")}
-              >
-                {label}
-              </button>
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={cn("btn tab-tile", tab === id ? "btn-brass" : "btn-ghost")}
+            >
+              <span className="block">{label}</span>
               {id === "uitdagingen" && active.length > 0 ? (
-                <button
-                  type="button"
-                  className="text-xs text-ivory underline decoration-brass underline-offset-2"
-                  onClick={() => setTab("uitdagingen")}
-                >
+                <span className="mt-1 block text-[0.65rem] underline decoration-current underline-offset-2">
                   {active.length} open
-                </button>
-              ) : id === "uitslagen" && freshResults.length > 0 ? (
-                <button
-                  type="button"
-                  className="text-xs text-ivory underline decoration-brass underline-offset-2"
-                  onClick={() => setTab("uitslagen")}
-                >
+                </span>
+              ) : null}
+              {id === "uitslagen" && freshResults.length > 0 ? (
+                <span className="mt-1 block text-[0.65rem] underline decoration-current underline-offset-2">
                   {freshResults.length} nieuw
-                </button>
-              ) : (
-                <span className="h-4" aria-hidden />
-              )}
-            </div>
+                </span>
+              ) : null}
+            </button>
           ))}
         </div>
-      </div>
+      </nav>
+
+      {tab === "home" ? (
+        <HomeTab matches={matches} challenges={active} players={players} onOpen={setTab} />
+      ) : null}
 
       {tab === "piramide" ? (
         <>
@@ -468,17 +532,6 @@ export function LadderScreen(props: Props) {
         </div>
       ) : null}
 
-      {tab === "tijden" ? (
-        <>
-          {freeToday.length > 0 ? (
-            <p className="mb-4 text-sm text-ivory-dim">
-              Vandaag vrij: {freeToday.map((player) => player.name).join(", ")}
-            </p>
-          ) : null}
-          <TimesTab players={wall} />
-        </>
-      ) : null}
-
       {tab === "deelnemers" ? (
         <PlayersTab
           players={wall}
@@ -578,6 +631,8 @@ export function LadderScreen(props: Props) {
           })
         }
       />
+
+      <div className="h-28" aria-hidden />
 
       <Dialog.Root open={Boolean(pendingRemove)} onOpenChange={(open) => !open && setPendingRemove(null)}>
         <Dialog.Portal>
@@ -1312,43 +1367,6 @@ function MatchList({
         </li>
       ))}
     </ul>
-  );
-}
-
-function TimesTab({
-  players,
-}: {
-  players: Player[];
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="panel p-4">
-        <h2 className="font-display mb-3 text-2xl italic">Wie kan wanneer</h2>
-        <ul className="flex flex-col gap-3">
-          {DAYS_LONG.map((day, index) => {
-            const names = players.filter((player) => player.availability.some((slot) => slot.day === index));
-            return (
-              <li key={day} className="flex flex-col gap-1 border-b border-line pb-2 last:border-0 sm:flex-row sm:gap-4">
-                <span className="w-28 shrink-0 text-sm tracking-wide text-brass uppercase">{day}</span>
-                <span className="text-sm text-ivory-dim">
-                  {names.length
-                    ? names
-                        .map((player) => {
-                          const times = player.availability
-                            .filter((item) => item.day === index)
-                            .map((item) => `${fmtMin(item.startMin)}–${fmtMin(item.endMin)}`)
-                            .join(", ");
-                          return times ? `${player.name} ${times}` : player.name;
-                        })
-                        .join(" · ")
-                    : "niemand doorgegeven"}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
   );
 }
 

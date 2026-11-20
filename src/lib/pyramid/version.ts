@@ -8,6 +8,27 @@ export type Release = {
 
 export const RELEASES: Release[] = [
   {
+    version: 29,
+    date: "2026-11-20",
+    notes: [
+      "Home toont het cirkeldiagram, de uitdagingen en de laatste uitslagen.",
+      "De tabs staan onderaan het scherm.",
+    ],
+  },
+  {
+    version: 28,
+    date: "2026-11-20",
+    notes: [
+      "Doe je mee met één piramide, dan opent die meteen. Het startscherm slaan we over.",
+      "Tijden staat in het menu.",
+    ],
+  },
+  {
+    version: 27,
+    date: "2026-11-20",
+    notes: ["De app start weer. Het laadscherm blijft staan tot de pagina klaar is."],
+  },
+  {
     version: 27,
     date: "2026-11-20",
     notes: [

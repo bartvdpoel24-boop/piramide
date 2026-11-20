@@ -25,5 +25,6 @@ export function useBoot() {
       return () => listeners.delete(listener);
     },
     () => boot,
+    () => boot,
   );
 }
