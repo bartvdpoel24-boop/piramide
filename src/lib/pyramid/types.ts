@@ -69,6 +69,8 @@ export type Match = {
   swapped: boolean;
   stipAwarded: boolean;
   playedAt: string;
+  createdAt?: string;
+  recordedBy?: string | null;
   note: string;
   challengeId: string | null;
   sides?: MatchSide[];

@@ -17,6 +17,7 @@ import { useDemoStore } from "@/lib/pyramid/demo-store";
 import type { LadderSummary } from "@/lib/pyramid/types";
 import { AvailabilityForm } from "./availability-form";
 import { CreateForm } from "./create-form";
+import { ELO_K, ELO_START, eloDeltas, fmtEloDelta } from "@/lib/pyramid/elo";
 import { VERSION, RELEASES } from "@/lib/pyramid/version";
 
 type View = "main" | "create" | "settings" | "stats" | "h2h" | "info" | "regels" | "versie";
@@ -216,10 +217,18 @@ function VersionBody() {
 function InfoBody() {
   const blocks = [
     ["De piramide", "Elk briefje is een plek. Hoe hoger, hoe beter. Het bovenste briefje is de troon."],
-    ["Uitdagen", "Je daagt iemand uit die maximaal vier plaatsen boven je staat. Iemand onder je, tot vier plaatsen, nodig je uit. Staat iemand verder weg, dan nodig je uit om vrij te spelen. De piramide blijft dan staan."],
-    ["Wisselen", "Win je van iemand boven je, dan wisselen jullie van plek. De rest blijft hangen."],
+    ["Uitdagen", "Je kunt iedereen uitdagen, en iedereen kan jou uitdagen. De Elo wijzigt bij elke uitslag."],
+    ["Wisselen", "De piramide schuift alleen volgens de piramideregels: win je van iemand tot vier plaatsen boven je, dan wisselen jullie van plek. Sta je verder uit elkaar, of win je van iemand onder je, dan blijven de briefjes hangen."],
     ["Gelijkspel", "Bij een gelijkspel verandert er niets."],
     ["Stippen", "Houdt de nummer 1 stand, dan komt er een stip bij op de troon."],
+    [
+      "Elo",
+      `Naast de plek heeft iedereen een Elo-rating. Iedereen begint op ${ELO_START}. Na elke uitslag wordt die opnieuw berekend uit alle partijen, op datum. De verwachte score is 1 gedeeld door (1 + 10 tot de macht (tegenstander min jij) gedeeld door 400). De nieuwe rating is de oude plus ${ELO_K} keer (echte score min verwachte score). Winst telt als 1, verlies als 0 en gelijkspel als 0,5. Winnen van iemand met een hogere rating levert dus meer op dan winnen van iemand met een lagere.`,
+    ],
+    [
+      "Elo bij een groep",
+      `Bij meer dan twee spelers vergelijken we elk paar op score. De factor ${ELO_K} delen we door het aantal spelers min één, zodat een grote partij ongeveer even zwaar weegt als een gewone. Vrij spelen telt mee voor de Elo, niet voor de piramide. Een gewijzigde score herberekent de rating.`,
+    ],
     ["Deelnemen", "Deel de link, bijvoorbeeld via WhatsApp. De ontvanger opent hem, logt in en koppelt een naam. Met de code kan dat ook."],
     ["Tijden", "Zet wanneer je kunt spelen. Meerdere tijden op dezelfde dag mag."],
     ["Accepteren", "Alleen degene die uitgedaagd is, kan de uitdaging aannemen of afwijzen."],
@@ -289,6 +298,7 @@ function HeadToHead({
   const leftPlayer = wall.find((player) => player.id === left);
   const rightPlayer = wall.find((player) => player.id === right);
   const compared = matches && left && right && left !== right ? headToHead(matches, left, right) : null;
+  const swings = matches ? eloDeltas(matches) : null;
 
   if (!demo && !ladderId && !signedIn) {
     return <p className="text-sm text-ivory-dim">Open een piramide om twee spelers te vergelijken.</p>;
@@ -331,7 +341,11 @@ function HeadToHead({
                 <li key={line.id} className="panel p-3 text-sm">
                   <span className="text-ivory-dim">{fmtWhen(line.playedAt)}</span>
                   <span className="mt-1 block font-display text-lg italic">
-                    {leftPlayer.name} {line.left} – {line.right} {rightPlayer.name}
+                    {leftPlayer.name} {line.left} – {line.right} {rightPlayer.name}{" "}
+                    <span className="tabular-nums">
+                      {fmtEloDelta(swings?.get(line.id)?.get(leftPlayer.id) ?? 0)} /{" "}
+                      {fmtEloDelta(swings?.get(line.id)?.get(rightPlayer.id) ?? 0)}
+                    </span>
                   </span>
                 </li>
               ))}

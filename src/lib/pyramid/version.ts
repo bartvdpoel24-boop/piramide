@@ -8,6 +8,67 @@ export type Release = {
 
 export const RELEASES: Release[] = [
   {
+    version: 27,
+    date: "2026-11-20",
+    notes: [
+      "Het Android-icoon is de poolpiramide en de app heet Piramide.",
+      "Het splash screen toont de laadvoortgang en de laatste wijziging, en blijft tot de app geladen is.",
+    ],
+  },
+  {
+    version: 26,
+    date: "2026-11-12",
+    notes: ["Uitslagen staan overal op datum en tijd, de nieuwste bovenaan."],
+  },
+  {
+    version: 25,
+    date: "2026-11-12",
+    notes: [
+      "Bij een uitslag kies je ook de tijd. Oude scores die op 12:00 stonden krijgen de tijd van het invoeren.",
+      "Bart kan een uitslag verwijderen.",
+    ],
+  },
+  {
+    version: 24,
+    date: "2026-11-12",
+    notes: [
+      "Op de piramide kun je sorteren op een Elo-lijst. De nummers volgen die ranglijst.",
+      "Iedereen kan iedereen uitdagen. De piramide schuift alleen volgens de piramideregels. De Elo wijzigt altijd.",
+    ],
+  },
+  {
+    version: 23,
+    date: "2026-11-12",
+    notes: [
+      "Uitslagen toont alles, nieuwst ingevoerd eerst.",
+      "De beheerder en de aanmaker kunnen een score wijzigen.",
+    ],
+  },
+  {
+    version: 22,
+    date: "2026-11-12",
+    notes: ["Achter een score staat hoeveel Elo die partij opleverde of kostte."],
+  },
+  {
+    version: 21,
+    date: "2026-11-12",
+    notes: [
+      "Iedereen heeft een Elo-rating naast de piramideplek.",
+      "Deelnemers kun je sorteren op piramide of op Elo.",
+      "In Info staat hoe de Elo wordt berekend.",
+    ],
+  },
+  {
+    version: 20,
+    date: "2026-11-04",
+    notes: ["Bij een uitslag met meerdere deelnemers staan alleen actieve, aangemelde spelers."],
+  },
+  {
+    version: 19,
+    date: "2026-11-04",
+    notes: ["Bij een uitslag kies je de datum van de wedstrijd."],
+  },
+  {
     version: 18,
     date: "2026-11-03",
     notes: [

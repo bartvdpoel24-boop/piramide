@@ -6,11 +6,11 @@ import { homeFeed, joinLadder, listMyLadders, previewInvite } from "@/lib/pyrami
 import { challengeWhen, fmtWhen, matchSummary } from "@/lib/pyramid/format";
 import { currentMonthLabel, monthWinShare, type StatRow } from "@/lib/pyramid/stats";
 import { useDemoStore } from "@/lib/pyramid/demo-store";
+import { setBoot } from "@/lib/pyramid/boot";
 import type { HomeChallenge, HomeMatch, InvitePreview, LadderSummary } from "@/lib/pyramid/types";
 import { WinPie } from "./stats-panel";
 import { RackMark } from "./mark";
 import { Shell } from "./shell";
-import { Splash } from "./splash";
 
 function errorText(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
@@ -19,16 +19,16 @@ function errorText(error: unknown) {
 }
 
 export function Lobby() {
-  return (
-    <>
-      <Splash />
-      <LobbyBody />
-    </>
-  );
+  return <LobbyBody />;
 }
 
 function LobbyBody() {
   const { user, isPending } = useCurrentUserState();
+
+  useEffect(() => {
+    if (isPending || user) return;
+    setBoot({ progress: 100, ready: true });
+  }, [isPending, user]);
   return (
     <Shell>
       <header className="mb-8 flex items-center justify-between gap-3">
@@ -232,6 +232,14 @@ function SignedIn() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if ((ladders !== null || error) && (feed !== null || error)) {
+      setBoot({ progress: 100, ready: true });
+      return;
+    }
+    if (ladders !== null || feed !== null) setBoot({ progress: 84 });
+  }, [ladders, feed, error]);
 
   return (
     <div className="flex flex-col gap-4">

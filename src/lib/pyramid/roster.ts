@@ -87,6 +87,7 @@ export function freshDemo(): DemoState {
     swapped: false,
     stipAwarded: true,
     playedAt: playedAt.toISOString(),
+    createdAt: playedAt.toISOString(),
     note: "Voorbeeld, nog geen echte partij.",
     challengeId: null,
   };

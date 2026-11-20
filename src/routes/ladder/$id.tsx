@@ -10,6 +10,7 @@ import {
   recordResult,
   recordGroupResult,
   editResult,
+  deleteResult,
   removeLadderPlayer,
   restoreLadderPlayer,
   respondChallenge,
@@ -18,6 +19,7 @@ import {
 import type { LadderSnapshot } from "@/lib/pyramid/types";
 import { LadderScreen } from "@/components/pyramid/ladder-screen";
 import { Shell } from "@/components/pyramid/shell";
+import { setBoot } from "@/lib/pyramid/boot";
 
 export const Route = createFileRoute("/ladder/$id")({ component: LiveLadder });
 
@@ -58,6 +60,10 @@ function LiveLadder() {
       window.removeEventListener("piramide-refresh", refresh);
     };
   }, [id, isPending, user]);
+
+  useEffect(() => {
+    if (data || error || (!isPending && !user)) setBoot({ progress: 100, ready: true });
+  }, [data, error, isPending, user]);
 
   if (isPending || (user && !data && !error)) {
     return (
@@ -113,6 +119,10 @@ function LiveLadder() {
         const outcome = await editResult({ data: { ladderId: id, ...input } });
         await load();
         return outcome;
+      }}
+      onDeleteResult={async (matchId) => {
+        await deleteResult({ data: { ladderId: id, matchId } });
+        await load();
       }}
       onAvailability={async (slots) => {
         await setAvailability({ data: { ladderId: id, slots } });

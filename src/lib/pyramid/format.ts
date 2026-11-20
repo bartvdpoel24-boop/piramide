@@ -64,6 +64,63 @@ export function amsterdamDate(instant: Date | string = new Date()) {
   }).format(date);
 }
 
+export function amsterdamTime(instant: Date | string = new Date()) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return "12:00";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Amsterdam",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = (parts.find((part) => part.type === "hour")?.value ?? "12").replace("24", "00");
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+}
+
+function amsterdamInstant(day: string, time: string) {
+  const [year, month, date] = day.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const utc = new Date(Date.UTC(year, (month ?? 1) - 1, date, hour, minute));
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Amsterdam",
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(utc);
+  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const zoned = Date.UTC(read("year"), read("month") - 1, read("day"), read("hour") % 24, read("minute"), read("second"));
+  return new Date(utc.getTime() - (zoned - utc.getTime()));
+}
+
+/** Datum en tijd in Amsterdam. Zonder tijd geldt het huidige tijdstip. */
+export function playedAtFromDay(day: string | null | undefined, time?: string | null) {
+  const today = amsterdamDate();
+  const value = typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : today;
+  if (value > today) throw new Error("De wedstrijd kan niet in de toekomst liggen.");
+  const clock = typeof time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(time) ? time : amsterdamTime();
+  const at = amsterdamInstant(value, clock);
+  if (Number.isNaN(at.getTime())) return new Date().toISOString();
+  if (at.getTime() > Date.now() + 60_000) throw new Error("De wedstrijd kan niet in de toekomst liggen.");
+  return at.toISOString();
+}
+
+/** Placeholder-middag (12:00) wordt het tijdstip waarop de uitslag is ingevoerd. */
+export function repairPlayedAt(playedAt: string, createdAt?: string | null) {
+  if (!createdAt || amsterdamTime(playedAt) !== "12:00") return playedAt;
+  const entered = amsterdamTime(createdAt);
+  if (entered === "12:00") return playedAt;
+  try {
+    return playedAtFromDay(amsterdamDate(playedAt), entered);
+  } catch {
+    return playedAt;
+  }
+}
+
 export function shiftDate(day: string, days: number) {
   const [year, month, date] = day.split("-").map(Number);
   if (!year || !month || !date) return day;

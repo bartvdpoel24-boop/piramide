@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { canChallengeUp, canInviteDown, cleanName, friendlyResult, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
+import { cleanName, friendlyResult, isOnWall, isPyramidAdmin, nudgePlayer, parkPlayer, restorePlayer, reviseMatch, sameOutcome, scoreMatch, settleGroup } from "./rules";
 import { cleanEmail } from "./email";
-import { isChallengeExpired } from "./format";
+import { isChallengeExpired, playedAtFromDay, repairPlayedAt } from "./format";
 import { freshDemo, noteForIndex, withDemoSignups, type DemoState } from "./roster";
-import { CHALLENGE_RANGE, type Challenge, type Match, type NoteColor, type SettleResult, type Slot } from "./types";
+import { type Challenge, type Match, type NoteColor, type SettleResult, type Slot } from "./types";
 import type { Player } from "./types";
 
 type DemoActions = {
@@ -27,12 +27,15 @@ type DemoActions = {
     rightScore: number;
     note: string;
     challengeId?: string | null;
+    playedOn?: string | null;
+    playedTime?: string | null;
   }) => SettleResult;
-  recordGroup: (input: { sides: { id: string; score: number }[]; note: string }) => SettleResult;
+  recordGroup: (input: { sides: { id: string; score: number }[]; note: string; playedOn?: string | null; playedTime?: string | null }) => SettleResult;
   nudge: (playerId: string, direction: -1 | 1) => void;
   remove: (playerId: string) => void;
   restore: (playerId: string) => void;
-  revise: (matchId: string, winnerScore: number, loserScore: number, note: string) => SettleResult;
+  revise: (matchId: string, winnerScore: number, loserScore: number, note: string, playedOn?: string | null, playedTime?: string | null, asOwner?: boolean) => SettleResult;
+  removeMatch: (matchId: string) => void;
   add: (name: string) => void;
   rename: (name: string) => void;
   setEmail: (email: string) => void;
@@ -63,18 +66,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         const defender = players.find((player) => player.id === defenderId);
         if (!me || !defender) throw new Error("Speler niet gevonden.");
         if (me.id === defender.id) throw new Error("Je kunt jezelf niet uitdagen.");
-        const allowed = kind === "friendly"
-          ? true
-          : kind === "invite"
-            ? canInviteDown(me.rank, defender.rank, CHALLENGE_RANGE)
-            : canChallengeUp(me.rank, defender.rank, CHALLENGE_RANGE);
-        if (!allowed) {
-          throw new Error(
-            kind === "invite"
-              ? `Je kunt iemand tot ${CHALLENGE_RANGE} plaatsen onder je uitnodigen.`
-              : `Je kunt alleen iemand tot ${CHALLENGE_RANGE} plaatsen boven je uitdagen.`,
-          );
-        }
+        if (!isOnWall(me) || !isOnWall(defender)) throw new Error("Die speler hangt niet op de piramide.");
         const pending = challenges.some(
           (item) =>
             (item.status === "open" || item.status === "accepted") &&
@@ -118,11 +110,11 @@ export const useDemoStore = create<DemoState & DemoActions>()(
           challenges: get().challenges.map((item) => (item.id === id ? { ...item, status } : item)),
         });
       },
-      record: ({ leftId, rightId, leftScore, rightScore, note, challengeId }) => {
+      record: ({ leftId, rightId, leftScore, rightScore, note, challengeId, playedOn, playedTime }) => {
         const challenge = get().challenges.find((item) => item.id === challengeId);
         const settled = challenge?.kind === "friendly"
           ? friendlyResult(get().players, leftId, rightId, leftScore, rightScore)
-          : settleMatch(get().players, leftId, rightId, leftScore, rightScore);
+          : scoreMatch(get().players, leftId, rightId, leftScore, rightScore);
         const matchId = crypto.randomUUID();
         set({
           players: settled.players,
@@ -139,7 +131,9 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               loserRankBefore: settled.loserRankBefore,
               swapped: settled.swapped,
               stipAwarded: settled.stipAwarded,
-              playedAt: new Date().toISOString(),
+              playedAt: playedAtFromDay(playedOn, playedTime),
+              createdAt: new Date().toISOString(),
+              recordedBy: get().players.find((player) => player.id === get().personaId)?.userId ?? get().personaId,
               note: note.slice(0, 140),
               challengeId: challengeId ?? null,
             },
@@ -151,7 +145,7 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         });
         return settled;
       },
-      recordGroup: ({ sides, note }) => {
+      recordGroup: ({ sides, note, playedOn, playedTime }) => {
         const persona = get().players.find((player) => player.id === get().personaId);
         const involved = sides.some((side) => side.id === get().personaId);
         if (!involved && !isPyramidAdmin(persona)) {
@@ -177,7 +171,9 @@ export const useDemoStore = create<DemoState & DemoActions>()(
               loserRankBefore: bottom.rankBefore,
               swapped: settled.swapped,
               stipAwarded: settled.stipAwarded,
-              playedAt: new Date().toISOString(),
+              playedAt: playedAtFromDay(playedOn, playedTime),
+              createdAt: new Date().toISOString(),
+              recordedBy: persona?.userId ?? get().personaId,
               note: note.slice(0, 140),
               challengeId: null,
               sides: settled.places,
@@ -219,16 +215,18 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         if (!isPyramidAdmin(persona)) throw new Error("Alleen Bart van der Poel zet een briefje terug.");
         set({ players: restorePlayer(get().players, playerId) });
       },
-      revise: (matchId, winnerScore, loserScore, note) => {
+      revise: (matchId, winnerScore, loserScore, note, playedOn, playedTime, asOwner = false) => {
         const persona = get().players.find((player) => player.id === get().personaId);
         const match = get().matches.find((item) => item.id === matchId);
         if (!match) throw new Error("Uitslag niet gevonden.");
         const played = match.winnerId === get().personaId || match.loserId === get().personaId;
-        if (!played && !isPyramidAdmin(persona)) throw new Error("Alleen de spelers of Bart kunnen deze score wijzigen.");
+        if (!played && !isPyramidAdmin(persona) && !asOwner && match.recordedBy !== (persona?.userId ?? get().personaId)) {
+          throw new Error("Alleen de beheerder, de aanmaker of de spelers kunnen deze score wijzigen.");
+        }
         if (sameOutcome(match.winnerScore, match.loserScore, winnerScore, loserScore)) {
           set({
             matches: get().matches.map((item) =>
-              item.id === matchId ? { ...item, winnerScore, loserScore, note: note.slice(0, 140) } : item,
+              item.id === matchId ? { ...item, winnerScore, loserScore, note: note.slice(0, 140), playedAt: playedAtFromDay(playedOn, playedTime) } : item,
             ),
           });
           return {
@@ -264,11 +262,48 @@ export const useDemoStore = create<DemoState & DemoActions>()(
                   swapped: settled.swapped,
                   stipAwarded: settled.stipAwarded,
                   note: note.slice(0, 140),
+                  playedAt: playedAtFromDay(playedOn, playedTime),
                 }
               : item,
           ),
         });
         return settled;
+      },
+      removeMatch: (matchId) => {
+        const persona = get().players.find((player) => player.id === get().personaId);
+        if (!isPyramidAdmin(persona)) throw new Error("Alleen Bart van der Poel kan een uitslag verwijderen.");
+        const match = get().matches.find((item) => item.id === matchId);
+        if (!match) throw new Error("Uitslag niet gevonden.");
+        let players = get().players.map((player) => ({ ...player }));
+        if (match.stipAwarded && match.winnerId) {
+          players = players.map((player) =>
+            player.id === match.winnerId ? { ...player, stippen: Math.max(0, player.stippen - 1) } : player,
+          );
+        }
+        const group = match.sides && match.sides.length > 2 ? match.sides : null;
+        if (group) {
+          const canRestore = group.every((side) => players.find((player) => player.id === side.id)?.rank === side.rankAfter);
+          if (canRestore) {
+            players = players.map((player) => {
+              const side = group.find((item) => item.id === player.id);
+              return side ? { ...player, rank: side.rankBefore } : player;
+            });
+          }
+        } else if (match.swapped && match.winnerId && match.loserId) {
+          const winner = players.find((player) => player.id === match.winnerId);
+          const loser = players.find((player) => player.id === match.loserId);
+          if (winner && loser && winner.rank === match.loserRankBefore && loser.rank === match.winnerRankBefore) {
+            players = players.map((player) => {
+              if (player.id === winner.id) return { ...player, rank: loser.rank };
+              if (player.id === loser.id) return { ...player, rank: winner.rank };
+              return player;
+            });
+          }
+        }
+        set({
+          players,
+          matches: get().matches.filter((item) => item.id !== matchId),
+        });
       },
       add: (name) => {
         const clean = cleanName(name);
@@ -329,13 +364,16 @@ export const useDemoStore = create<DemoState & DemoActions>()(
         });
       },
     }),
-    { name: "piramide-demo-v1", version: 3, migrate: (persisted) => {
+    { name: "piramide-demo-v1", version: 4, migrate: (persisted) => {
       if (!persisted || typeof persisted !== "object") return freshDemo();
       const state = persisted as DemoState;
       if (!Array.isArray(state.players)) return freshDemo();
       return {
         ...state,
         players: withDemoSignups(state.players).map((player) => ({ ...player, email: player.email ?? "" })),
+        matches: Array.isArray(state.matches)
+          ? state.matches.map((match) => ({ ...match, playedAt: repairPlayedAt(match.playedAt, match.createdAt) }))
+          : [],
       };
     } },
   ),

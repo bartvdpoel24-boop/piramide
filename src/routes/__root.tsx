@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/lib/auth/provider";
 import { ChunkReload } from "@/lib/error-component";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { BootSplash } from "@/components/pyramid/splash";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Piramide";
@@ -16,6 +17,8 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#10281F" },
     ],
     links: [
+      { rel: "icon", type: "image/png", sizes: "192x192", href: "/icon-192.png" },
+      { rel: "icon", type: "image/png", sizes: "512x512", href: "/icon-512.png" },
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       {
         rel: "stylesheet",
@@ -35,6 +38,7 @@ export const Route = createRootRoute({
         <PreviewHostBridge />
         <ChunkReload />
         <AuthProvider>
+          <BootSplash />
           <Outlet />
         </AuthProvider>
         <Toaster

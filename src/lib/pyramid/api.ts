@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { canChallengeUp, canInviteDown, cleanName, friendlyResult, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, settleGroup, settleMatch } from "./rules";
+import { cleanName, friendlyResult, isOnWall, isPyramidAdmin, normalizeSlots, parkPlayer, reviseMatch, sameOutcome, scoreMatch, settleGroup } from "./rules";
 import { challengeMail, cleanEmail } from "./email";
-import { challengeWhen } from "./format";
+import { challengeWhen, playedAtFromDay, repairPlayedAt } from "./format";
 import { monthWinShare } from "./stats";
 import { noteForIndex, WALL } from "./roster";
 import { asNoteColor } from "./notes";
@@ -202,16 +202,17 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
     swapped: boolean;
     stip_awarded: boolean;
     played_at: unknown;
+    created_at: unknown;
     note: string;
     challenge_id: string | null;
     sides: unknown;
+    recorded_by: string;
   }>`
     select id, winner_id, loser_id, winner_name, loser_name, winner_score, loser_score,
-           winner_rank_before, loser_rank_before, swapped, stip_awarded, played_at, note, challenge_id, sides
+           winner_rank_before, loser_rank_before, swapped, stip_awarded, played_at, created_at, note, challenge_id, sides, recorded_by
     from ladder_matches
     where ladder_id = ${ladderId}
-    order by played_at desc
-    limit 80
+    order by played_at desc, created_at desc
   `;
   return {
     id: access.ladder.id,
@@ -245,7 +246,9 @@ async function snapshot(sql: Sql, userId: string, ladderId: string): Promise<Lad
       loserRankBefore: Number(row.loser_rank_before),
       swapped: Boolean(row.swapped),
       stipAwarded: Boolean(row.stip_awarded),
-      playedAt: iso(row.played_at),
+      playedAt: repairPlayedAt(iso(row.played_at), iso(row.created_at)),
+      createdAt: iso(row.created_at),
+      recordedBy: row.recorded_by,
       note: row.note,
       challengeId: row.challenge_id,
       sides: readSides(row.sides),
@@ -374,7 +377,7 @@ export const homeFeed = createServerFn({ method: "GET" })
           select 1 from ladder_players p
           where p.ladder_id = l.id and p.user_id = ${context.userId}
         )
-      order by m.played_at desc
+      order by m.played_at desc, m.created_at desc
       limit 4
     `;
     const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
@@ -716,18 +719,7 @@ export const createChallenge = createServerFn({ method: "POST" })
     const defender = players.find((player) => player.id === data.defenderId);
     if (!me || !defender) throw new Error("Speler niet gevonden.");
     if (me.id === defender.id) throw new Error("Je kunt jezelf niet uitdagen.");
-    const allowed = data.kind === "friendly"
-      ? true
-      : data.kind === "invite"
-        ? canInviteDown(me.rank, defender.rank, access.range)
-        : canChallengeUp(me.rank, defender.rank, access.range);
-    if (!allowed) {
-      throw new Error(
-        data.kind === "invite"
-          ? `Je kunt iemand tot ${access.range} plaatsen onder je uitnodigen.`
-          : `Je kunt alleen iemand tot ${access.range} plaatsen boven je uitdagen.`,
-      );
-    }
+    if (!isOnWall(me) || !isOnWall(defender)) throw new Error("Die speler hangt niet op de piramide.");
     await lapseChallenges(sql, data.ladderId);
     const pending = await sql<{ id: string }>`
       select id from ladder_challenges
@@ -823,6 +815,8 @@ export const recordResult = createServerFn({ method: "POST" })
       rightScore: number;
       note: string;
       challengeId?: string | null;
+      playedOn?: string | null;
+      playedTime?: string | null;
     }) => {
       if (!input?.ladderId || !input.leftId || !input.rightId) throw new Error("Kies beide spelers.");
       return {
@@ -833,6 +827,7 @@ export const recordResult = createServerFn({ method: "POST" })
         rightScore: Number(input.rightScore),
         note: String(input.note ?? "").slice(0, 140),
         challengeId: input.challengeId ? String(input.challengeId) : null,
+        playedAt: playedAtFromDay(input.playedOn, input.playedTime),
       };
     },
   )
@@ -868,7 +863,7 @@ export const recordResult = createServerFn({ method: "POST" })
             ${crypto.randomUUID()}, ${data.ladderId}, ${data.challengeId},
             ${settled.winnerId}, ${settled.loserId}, ${settled.winnerName}, ${settled.loserName},
             ${settled.winnerScore}, ${settled.loserScore}, ${settled.winnerRankBefore}, ${settled.loserRankBefore},
-            ${false}, ${false}, now(), ${data.note}, ${context.userId}
+            ${false}, ${false}, ${data.playedAt}::timestamptz, ${data.note}, ${context.userId}
           )
         `;
         await sql`update ladder_challenges set status = 'played' where id = ${data.challengeId}`;
@@ -880,7 +875,7 @@ export const recordResult = createServerFn({ method: "POST" })
         };
       }
     }
-    const settled = settleMatch(players, left.id, right.id, data.leftScore, data.rightScore, access.range);
+    const settled = scoreMatch(players, left.id, right.id, data.leftScore, data.rightScore, access.range);
     if (settled.swapped) {
       await swapRanks(
         sql,
@@ -903,7 +898,7 @@ export const recordResult = createServerFn({ method: "POST" })
         ${crypto.randomUUID()}, ${data.ladderId}, ${data.challengeId},
         ${settled.winnerId}, ${settled.loserId}, ${settled.winnerName}, ${settled.loserName},
         ${settled.winnerScore}, ${settled.loserScore}, ${settled.winnerRankBefore}, ${settled.loserRankBefore},
-        ${settled.swapped}, ${settled.stipAwarded}, now(), ${data.note}, ${context.userId}
+        ${settled.swapped}, ${settled.stipAwarded}, ${data.playedAt}::timestamptz, ${data.note}, ${context.userId}
       )
     `;
     if (data.challengeId) {
@@ -919,7 +914,7 @@ export const recordResult = createServerFn({ method: "POST" })
 
 export const recordGroupResult = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { ladderId: string; sides: { id: string; score: number }[]; note: string }) => {
+  .validator((input: { ladderId: string; sides: { id: string; score: number }[]; note: string; playedOn?: string | null; playedTime?: string | null }) => {
     if (!input?.ladderId || !Array.isArray(input.sides) || input.sides.length < 2) {
       throw new Error("Kies minstens twee spelers.");
     }
@@ -927,6 +922,7 @@ export const recordGroupResult = createServerFn({ method: "POST" })
       ladderId: String(input.ladderId),
       note: String(input.note ?? "").slice(0, 140),
       sides: input.sides.map((side) => ({ id: String(side.id), score: Number(side.score) })),
+      playedAt: playedAtFromDay(input.playedOn, input.playedTime),
     };
   })
   .handler(async ({ context, data }) => {
@@ -953,7 +949,7 @@ export const recordGroupResult = createServerFn({ method: "POST" })
         ${crypto.randomUUID()}, ${data.ladderId}, ${null},
         ${top.id}, ${bottom.id}, ${top.name}, ${bottom.name},
         ${top.score}, ${sharedTop ? top.score : bottom.score}, ${top.rankBefore}, ${bottom.rankBefore},
-        ${settled.swapped}, ${settled.stipAwarded}, now(), ${data.note}, ${context.userId},
+        ${settled.swapped}, ${settled.stipAwarded}, ${data.playedAt}::timestamptz, ${data.note}, ${context.userId},
         ${JSON.stringify(settled.places)}::jsonb
       )
     `;
@@ -1048,7 +1044,7 @@ async function writeRoster(sql: Sql, ladderId: string, players: Player[]) {
 
 export const editResult = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { ladderId: string; matchId: string; winnerScore: number; loserScore: number; note?: string }) => {
+  .validator((input: { ladderId: string; matchId: string; winnerScore: number; loserScore: number; note?: string; playedOn?: string | null; playedTime?: string | null }) => {
     if (!input?.ladderId || !input.matchId) throw new Error("Uitslag ontbreekt.");
     const winnerScore = Number(input.winnerScore);
     const loserScore = Number(input.loserScore);
@@ -1059,11 +1055,12 @@ export const editResult = createServerFn({ method: "POST" })
       winnerScore,
       loserScore,
       note: String(input.note ?? "").slice(0, 140),
+      playedAt: playedAtFromDay(input.playedOn, input.playedTime),
     };
   })
   .handler(async ({ context, data }) => {
     const sql = await db();
-    await requireLadder(sql, context.userId, data.ladderId);
+    const access = await requireLadder(sql, context.userId, data.ladderId);
     const rows = await sql<{
       id: string;
       winner_id: string | null;
@@ -1072,8 +1069,9 @@ export const editResult = createServerFn({ method: "POST" })
       loser_score: number;
       swapped: boolean;
       stip_awarded: boolean;
+      recorded_by: string;
     }>`
-      select id, winner_id, loser_id, winner_score, loser_score, swapped, stip_awarded
+      select id, winner_id, loser_id, winner_score, loser_score, swapped, stip_awarded, recorded_by
       from ladder_matches
       where id = ${data.matchId} and ladder_id = ${data.ladderId}
     `;
@@ -1082,12 +1080,15 @@ export const editResult = createServerFn({ method: "POST" })
     const players = await loadPlayers(sql, data.ladderId, true);
     const actor = players.find((player) => player.userId === context.userId);
     const played = actor && (actor.id === match.winner_id || actor.id === match.loser_id);
-    if (!played && !isPyramidAdmin(actor)) throw new Error("Alleen de spelers of Bart kunnen deze score wijzigen.");
+    const madeIt = match.recorded_by === context.userId;
+    if (!played && !isPyramidAdmin(actor) && !access.amOwner && !madeIt) {
+      throw new Error("Alleen de beheerder, de aanmaker of de spelers kunnen deze score wijzigen.");
+    }
     const unchanged = sameOutcome(Number(match.winner_score), Number(match.loser_score), data.winnerScore, data.loserScore);
     if (unchanged) {
       await sql`
         update ladder_matches
-        set winner_score = ${data.winnerScore}, loser_score = ${data.loserScore}, note = ${data.note}
+        set winner_score = ${data.winnerScore}, loser_score = ${data.loserScore}, note = ${data.note}, played_at = ${data.playedAt}::timestamptz
         where id = ${match.id}
       `;
       const winner = players.find((player) => player.id === match.winner_id);
@@ -1117,7 +1118,8 @@ export const editResult = createServerFn({ method: "POST" })
         loser_rank_before = ${settled.loserRankBefore},
         swapped = ${settled.swapped},
         stip_awarded = ${settled.stipAwarded},
-        note = ${data.note}
+        note = ${data.note},
+        played_at = ${data.playedAt}::timestamptz
       where id = ${match.id}
     `;
     return {
@@ -1126,6 +1128,66 @@ export const editResult = createServerFn({ method: "POST" })
       draw: settled.draw,
       winnerName: settled.winnerName,
     };
+  });
+
+export const deleteResult = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { ladderId: string; matchId: string }) => {
+    if (!input?.ladderId || !input.matchId) throw new Error("Uitslag ontbreekt.");
+    return { ladderId: String(input.ladderId), matchId: String(input.matchId) };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await db();
+    await requireLadder(sql, context.userId, data.ladderId);
+    const players = await loadPlayers(sql, data.ladderId, true);
+    const actor = players.find((player) => player.userId === context.userId);
+    if (!isPyramidAdmin(actor)) throw new Error("Alleen Bart van der Poel kan een uitslag verwijderen.");
+    const rows = await sql<{
+      id: string;
+      winner_id: string | null;
+      loser_id: string | null;
+      winner_rank_before: number;
+      loser_rank_before: number;
+      swapped: boolean;
+      stip_awarded: boolean;
+      sides: unknown;
+    }>`
+      select id, winner_id, loser_id, winner_rank_before, loser_rank_before, swapped, stip_awarded, sides
+      from ladder_matches
+      where id = ${data.matchId} and ladder_id = ${data.ladderId}
+    `;
+    const match = rows[0];
+    if (!match) throw new Error("Uitslag niet gevonden.");
+    if (match.stip_awarded && match.winner_id) {
+      await sql`update ladder_players set stippen = greatest(stippen - 1, 0) where id = ${match.winner_id}`;
+    }
+    const sides = readSides(match.sides);
+    if (sides && sides.length > 2) {
+      const current = await loadPlayers(sql, data.ladderId, true);
+      const canRestore = sides.every((side) => current.find((player) => player.id === side.id)?.rank === side.rankAfter);
+      if (canRestore) {
+        for (const side of sides) {
+          await sql`update ladder_players set rank = ${-side.rankBefore} where id = ${side.id} and ladder_id = ${data.ladderId}`;
+        }
+        for (const side of sides) {
+          await sql`update ladder_players set rank = ${side.rankBefore} where id = ${side.id} and ladder_id = ${data.ladderId}`;
+        }
+      }
+    } else if (match.swapped && match.winner_id && match.loser_id) {
+      const current = await loadPlayers(sql, data.ladderId, true);
+      const winner = current.find((player) => player.id === match.winner_id);
+      const loser = current.find((player) => player.id === match.loser_id);
+      if (
+        winner &&
+        loser &&
+        winner.rank === Number(match.loser_rank_before) &&
+        loser.rank === Number(match.winner_rank_before)
+      ) {
+        await swapRanks(sql, data.ladderId, winner.id, winner.rank, loser.id, loser.rank);
+      }
+    }
+    await sql`delete from ladder_matches where id = ${match.id} and ladder_id = ${data.ladderId}`;
+    return { ok: true };
   });
 
 export const renameMe = createServerFn({ method: "POST" })
@@ -1311,13 +1373,14 @@ export const restoreLadderBackup = createServerFn({ method: "POST" })
         insert into ladder_matches (
           id, ladder_id, challenge_id, winner_id, loser_id, winner_name, loser_name,
           winner_score, loser_score, winner_rank_before, loser_rank_before,
-          swapped, stip_awarded, played_at, note, recorded_by, sides
+          swapped, stip_awarded, played_at, created_at, note, recorded_by, sides
         ) values (
           ${match.id || crypto.randomUUID()}, ${data.ladderId}, ${match.challengeId},
           ${match.winnerId}, ${match.loserId}, ${match.winnerName}, ${match.loserName},
           ${Number(match.winnerScore) || 0}, ${Number(match.loserScore) || 0},
           ${Number(match.winnerRankBefore) || 0}, ${Number(match.loserRankBefore) || 0},
           ${Boolean(match.swapped)}, ${Boolean(match.stipAwarded)}, ${match.playedAt},
+          ${match.createdAt || match.playedAt},
           ${String(match.note ?? "").slice(0, 140)}, ${context.userId},
           ${match.sides ? JSON.stringify(match.sides) : null}::jsonb
         )

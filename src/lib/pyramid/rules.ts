@@ -131,6 +131,24 @@ export function settleMatch(
   };
 }
 
+/** Binnen de piramideregels schuiven de briefjes. Daarbuiten blijft de piramide staan; de uitslag telt wel voor de Elo. */
+export function scoreMatch(
+  players: Player[],
+  leftId: string,
+  rightId: string,
+  leftScore: number,
+  rightScore: number,
+  range = CHALLENGE_RANGE,
+): SettleResult {
+  const left = players.find((player) => player.id === leftId);
+  const right = players.find((player) => player.id === rightId);
+  if (!left || !right) throw new Error("Speler niet gevonden.");
+  if (!legalDistance(left.rank, right.rank, range)) {
+    return friendlyResult(players, leftId, rightId, leftScore, rightScore);
+  }
+  return settleMatch(players, leftId, rightId, leftScore, rightScore, range);
+}
+
 export function nudgePlayer(players: Player[], id: string, direction: -1 | 1) {
   const me = players.find((player) => player.id === id);
   if (!me) throw new Error("Speler niet gevonden.");
@@ -203,7 +221,7 @@ export function reviseMatch(
       });
     }
   }
-  if (!isOnWall(winner) || !isOnWall(loser)) {
+  if (!isOnWall(winner) || !isOnWall(loser) || !legalDistance(winner.rank, loser.rank)) {
     const draw = winnerScore === loserScore;
     const winnerSide = !draw && winnerScore > loserScore;
     return {
@@ -221,7 +239,7 @@ export function reviseMatch(
       players: next,
     };
   }
-  const settled = settleMatch(next.filter(isOnWall), winner.id, loser.id, winnerScore, loserScore, 99);
+  const settled = settleMatch(next.filter(isOnWall), winner.id, loser.id, winnerScore, loserScore);
   return { ...settled, players: [...settled.players, ...next.filter((player) => !isOnWall(player))] };
 }
 

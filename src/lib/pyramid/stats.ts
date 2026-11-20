@@ -1,7 +1,7 @@
-import { fmtDay } from "./format.ts";
+import { fmtWhen } from "./format.ts";
 import type { Match } from "./types.ts";
 
-export type LastResult = { date: string; line: string };
+export type LastResult = { date: string; line: string; id: string };
 
 export type StatRow = { label: string; value: number; text: string };
 
@@ -75,7 +75,9 @@ export function headToHead(matches: Match[], leftId: string, rightId: string) {
   const lines: HeadLine[] = [];
   let leftTotal = 0;
   let rightTotal = 0;
-  const ordered = [...matches].sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime());
+  const ordered = [...matches].sort(
+    (a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime() || b.id.localeCompare(a.id),
+  );
   for (const match of ordered) {
     const pair = pairScores(match, leftId, rightId);
     if (!pair) continue;
@@ -102,7 +104,9 @@ function pairScores(match: Match, leftId: string, rightId: string) {
 }
 
 export function playerResults(matches: Match[], playerId: string) {
-  const ordered = [...matches].sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime());
+  const ordered = [...matches].sort(
+    (a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime() || b.id.localeCompare(a.id),
+  );
   const lines: {
     id: string;
     playedAt: string;
@@ -195,7 +199,7 @@ function walkStreaks(matches: Match[]) {
 }
 
 export function lastResults(matches: Match[]): Map<string, LastResult> {
-  const found = new Map<string, { at: number; date: string; line: string }>();
+  const found = new Map<string, { at: number; date: string; line: string; id: string }>();
   for (const match of matches) {
     const at = new Date(match.playedAt).getTime();
     if (Number.isNaN(at)) continue;
@@ -218,10 +222,10 @@ export function lastResults(matches: Match[]): Map<string, LastResult> {
       if (!side.id) continue;
       const prev = found.get(side.id);
       if (prev && prev.at >= at) continue;
-      found.set(side.id, { at, date: fmtDay(match.playedAt), line: side.line });
+      found.set(side.id, { at, date: fmtWhen(match.playedAt), line: side.line, id: match.id });
     }
   }
-  return new Map([...found].map(([id, row]) => [id, { date: row.date, line: row.line }]));
+  return new Map([...found].map(([id, row]) => [id, { date: row.date, line: row.line, id: row.id }]));
 }
 
 export function pyramidStats(

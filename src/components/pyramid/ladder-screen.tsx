@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronUp, Copy, Crown, Minus, Plus, Share2, Trash2
 import { toast } from "sonner";
 import {
   amsterdamDate,
+  amsterdamTime,
   challengeWhen,
   DAYS_LONG,
   fmtMin,
@@ -14,8 +15,9 @@ import {
   matchSummary,
   todayDayIndex,
 } from "@/lib/pyramid/format";
-import { canChallengeUp, canInviteDown, isOnWall, isPyramidAdmin, legalDistance, overlapSlots, pyramidRows, reviseMatch, sameOutcome, settleGroup, settleMatch } from "@/lib/pyramid/rules";
+import { canChallengeUp, isOnWall, isPyramidAdmin, overlapSlots, pyramidRows, reviseMatch, sameOutcome, scoreMatch, settleGroup } from "@/lib/pyramid/rules";
 import { NOTE_BG } from "@/lib/pyramid/notes";
+import { eloDeltas, eloRatings, ELO_START, fmtEloDelta } from "@/lib/pyramid/elo";
 import { currentStreaks, headToHead, lastResults, playerResults, type LastResult } from "@/lib/pyramid/stats";
 import { joinMessage, joinUrl, seatMessage, whatsAppHref } from "@/lib/pyramid/share";
 import type { Challenge, Match, Player, Slot } from "@/lib/pyramid/types";
@@ -37,6 +39,8 @@ type ResultDraft = {
   note?: string;
   swapped?: boolean;
   stipAwarded?: boolean;
+  playedOn?: string;
+  playedTime?: string;
 };
 
 export type LadderActions = {
@@ -56,8 +60,10 @@ export type LadderActions = {
     rightScore: number;
     note: string;
     challengeId: string | null;
+    playedOn: string;
+    playedTime: string;
   }) => Promise<{ swapped: boolean; stipAwarded: boolean; draw: boolean; winnerName: string }>;
-  onGroupResult?: (input: { sides: { id: string; score: number }[]; note: string }) => Promise<{
+  onGroupResult?: (input: { sides: { id: string; score: number }[]; note: string; playedOn: string; playedTime: string }) => Promise<{
     swapped: boolean;
     stipAwarded: boolean;
     draw: boolean;
@@ -72,7 +78,10 @@ export type LadderActions = {
     winnerScore: number;
     loserScore: number;
     note: string;
+    playedOn: string;
+    playedTime: string;
   }) => Promise<{ swapped: boolean; stipAwarded: boolean; draw: boolean; winnerName: string }>;
+  onDeleteResult?: (matchId: string) => Promise<void>;
   onAdd?: (name: string) => Promise<void>;
   onPersona?: (playerId: string) => void;
   onReset?: () => void;
@@ -115,10 +124,27 @@ export function LadderScreen(props: Props) {
   const [listMode, setListMode] = useState(false);
   const [resultDraft, setResultDraft] = useState<ResultDraft | null>(null);
   const [pendingRemove, setPendingRemove] = useState<Player | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Match | null>(null);
   const [groupOpen, setGroupOpen] = useState(false);
   const [onlyJoined, setOnlyJoined] = useState(true);
+  const [order, setOrder] = useState<"piramide" | "elo">("piramide");
   const joined = useMemo(() => wall.filter((player) => player.userId), [wall]);
   const visible = onlyJoined ? joined : wall;
+  const elo = useMemo(() => eloRatings(players.map((player) => player.id), matches), [players, matches]);
+  const eloChange = useMemo(() => eloDeltas(matches), [matches]);
+  const eloRank = useMemo(() => {
+    const ordered = [...visible].sort(
+      (a, b) => (elo.get(b.id) ?? ELO_START) - (elo.get(a.id) ?? ELO_START) || a.rank - b.rank,
+    );
+    return new Map(ordered.map((player, index) => [player.id, index + 1]));
+  }, [visible, elo]);
+  const listed = useMemo(
+    () =>
+      order === "elo"
+        ? [...visible].sort((a, b) => (eloRank.get(a.id) ?? 0) - (eloRank.get(b.id) ?? 0))
+        : visible,
+    [order, visible, eloRank],
+  );
   const rows = useMemo(() => pyramidRows(visible), [visible]);
   const latest = useMemo(() => lastResults(matches), [matches]);
   const streaks = useMemo(() => currentStreaks(matches), [matches]);
@@ -245,7 +271,23 @@ export function LadderScreen(props: Props) {
 
       {tab === "piramide" ? (
         <>
-          <div className="mb-4 flex justify-end">
+          <div className="mb-4 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              aria-pressed={order === "piramide"}
+              className={cn("btn h-10 min-h-0 shrink-0 text-sm", order === "piramide" ? "btn-brass" : "btn-ghost")}
+              onClick={() => setOrder("piramide")}
+            >
+              Piramide
+            </button>
+            <button
+              type="button"
+              aria-pressed={order === "elo"}
+              className={cn("btn h-10 min-h-0 shrink-0 text-sm", order === "elo" ? "btn-brass" : "btn-ghost")}
+              onClick={() => setOrder("elo")}
+            >
+              Elo
+            </button>
             <button
               type="button"
               aria-pressed={onlyJoined}
@@ -266,12 +308,12 @@ export function LadderScreen(props: Props) {
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-end gap-2 border-b border-line pb-3">
                 <button type="button" className="btn btn-ghost h-10 min-h-0 text-sm" onClick={() => setListMode(false)}>
-                  Toon piramide
+                  {order === "elo" ? "Toon Elo-lijst" : "Toon piramide"}
                 </button>
               </div>
               <div className="grid grid-cols-[minmax(7.5rem,0.9fr)_minmax(0,1.2fr)] items-start gap-3">
                 <ul className="flex max-h-[70vh] flex-col gap-1 overflow-y-auto py-1 pr-1">
-                  {visible.map((player) => (
+                  {listed.map((player) => (
                     <li key={player.id}>
                       <button
                         type="button"
@@ -281,8 +323,13 @@ export function LadderScreen(props: Props) {
                           player.id === selected.id ? "border-brass bg-felt-deep" : "border-line bg-felt-deep/40",
                         )}
                       >
-                        <span className="w-7 shrink-0 text-right tabular-nums text-brass">{player.rank}</span>
+                        <span className="w-7 shrink-0 text-right tabular-nums text-brass">
+                          {order === "elo" ? eloRank.get(player.id) : player.rank}
+                        </span>
                         <span className="min-w-0 flex-1 truncate font-display italic">{player.name}</span>
+                        <span className="shrink-0 tabular-nums text-ivory-dim" title="Elo">
+                          {elo.get(player.id) ?? ELO_START}
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -305,9 +352,38 @@ export function LadderScreen(props: Props) {
                   onRemove={props.onRemove && isPyramidAdmin(me) ? () => setPendingRemove(selected) : undefined}
                 />
               </div>
-              <PlayerScores player={selected} matches={matches} />
+              <PlayerScores player={selected} matches={matches} eloChange={eloChange} />
               {me && me.id !== selected.id ? <Versus player={selected} me={me} matches={matches} /> : null}
             </div>
+          ) : (
+            <>
+          {order === "elo" ? (
+            <ol className="flex flex-col gap-2">
+              {listed.length === 0 ? (
+                <li className="panel px-4 py-6 text-sm text-ivory-dim">Nog niemand heeft de code gebruikt.</li>
+              ) : (
+                listed.map((player) => (
+                  <li key={player.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(player.id);
+                        setListMode(true);
+                      }}
+                      className="panel flex w-full items-center gap-3 px-4 py-3 text-left"
+                    >
+                      <span className="w-8 shrink-0 text-right font-display text-2xl italic tabular-nums text-brass">
+                        {eloRank.get(player.id)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-display text-xl italic">{player.name}</span>
+                      <span className="shrink-0 tabular-nums text-ivory" title="Elo">
+                        {elo.get(player.id) ?? ELO_START}
+                      </span>
+                    </button>
+                  </li>
+                ))
+              )}
+            </ol>
           ) : (
             <>
           <PyramidBoard
@@ -317,6 +393,8 @@ export function LadderScreen(props: Props) {
             meId={meId}
             latest={latest}
             streaks={streaks}
+            elo={elo}
+            eloChange={eloChange}
             onSelect={(id) => {
               setSelectedId(id);
               setListMode(true);
@@ -325,6 +403,8 @@ export function LadderScreen(props: Props) {
           <p className="panel mb-4 p-4 text-sm text-ivory-dim">Tik een briefje om uit te dagen of een uitslag in te vullen.</p>
             </>
           )}
+        </>
+      )}
         </>
       ) : null}
 
@@ -353,6 +433,8 @@ export function LadderScreen(props: Props) {
           ) : null}
           <MatchList
             matches={matches}
+            eloChange={eloChange}
+            onDelete={props.onDeleteResult && isPyramidAdmin(me) ? (match) => setPendingDelete(match) : undefined}
             onEdit={
               props.onEditResult
                 ? (match) => {
@@ -368,12 +450,19 @@ export function LadderScreen(props: Props) {
                       note: match.note,
                       swapped: match.swapped,
                       stipAwarded: match.stipAwarded,
+                      playedOn: amsterdamDate(match.playedAt),
+                      playedTime: amsterdamTime(match.playedAt),
                     });
                   }
                 : undefined
             }
             canEdit={(match) =>
-              (match.sides?.length ?? 0) <= 2 && (match.winnerId === meId || match.loserId === meId || isPyramidAdmin(me))
+              (match.sides?.length ?? 0) <= 2 &&
+              (match.winnerId === meId ||
+                match.loserId === meId ||
+                isPyramidAdmin(me) ||
+                props.amOwner ||
+                Boolean(me?.userId && match.recordedBy && match.recordedBy === me.userId))
             }
           />
         </div>
@@ -396,6 +485,7 @@ export function LadderScreen(props: Props) {
           bench={bench}
           inviteCode={props.inviteCode}
           ladderName={props.name}
+          elo={elo}
           onSelect={(id) => {
             setSelectedId(id);
             setListMode(true);
@@ -478,6 +568,8 @@ export function LadderScreen(props: Props) {
                     winnerScore: input.leftScore,
                     loserScore: input.rightScore,
                     note: input.note,
+                    playedOn: input.playedOn,
+                    playedTime: input.playedTime,
                   })
                 : await props.onResult(input);
             setResultDraft(null);
@@ -516,6 +608,36 @@ export function LadderScreen(props: Props) {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <Dialog.Root open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-felt-deep/80" />
+          <Dialog.Content className="sheet">
+            <Dialog.Title className="font-display text-3xl italic">Uitslag verwijderen</Dialog.Title>
+            <Dialog.Description className="mt-1 text-sm text-ink/70">
+              Deze uitslag verdwijnt. Als de partij de plekken nog niet daarna heeft verschoven, gaan die terug. De Elo
+              wordt opnieuw berekend.
+            </Dialog.Description>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                className="btn btn-ink flex-1"
+                onClick={() => {
+                  const match = pendingDelete;
+                  setPendingDelete(null);
+                  if (!match) return;
+                  void run(() => props.onDeleteResult?.(match.id), "Uitslag verwijderd.");
+                }}
+              >
+                Verwijderen
+              </button>
+              <button type="button" className="btn btn-quiet" onClick={() => setPendingDelete(null)}>
+                Annuleren
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </Shell>
   );
 }
@@ -531,6 +653,8 @@ function PyramidBoard({
   meId,
   latest,
   streaks,
+  elo,
+  eloChange,
   onSelect,
 }: {
   rows: Player[][];
@@ -539,6 +663,8 @@ function PyramidBoard({
   meId: string | null;
   latest: Map<string, LastResult>;
   streaks: Map<string, number>;
+  elo: Map<string, number>;
+  eloChange: Map<string, Map<string, number>>;
   onSelect: (id: string) => void;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
@@ -707,7 +833,9 @@ function PyramidBoard({
                       )}
                       style={{ background: NOTE_BG[player.note], transform: `rotate(${activeNote ? 0 : tilt}deg)` }}
                     >
-                      <span className="text-xs tabular-nums opacity-70">#{player.rank}</span>
+                      <span className="text-xs tabular-nums opacity-70" title="Plek en Elo">
+                        #{player.rank} · {elo.get(player.id) ?? ELO_START}
+                      </span>
                       <span className="font-display line-clamp-3 text-base leading-tight italic">{player.name}</span>
                       {(streaks.get(player.id) ?? 0) > 0 ? (
                         <span className="mt-1 text-xs font-semibold text-brass-deep">{streaks.get(player.id)} op rij</span>
@@ -725,7 +853,8 @@ function PyramidBoard({
                         <span className="mt-1 text-[10px] leading-tight font-semibold text-ink/80">
                           {latest.get(player.id)?.date}
                           <br />
-                          {latest.get(player.id)?.line}
+                          {latest.get(player.id)?.line}{" "}
+                          {fmtEloDelta(eloChange.get(latest.get(player.id)?.id ?? "")?.get(player.id) ?? 0)}
                         </span>
                       ) : null}
                       {player.id === meId ? (
@@ -819,7 +948,15 @@ function ShareLadder({ name, code }: { name: string; code: string }) {
   );
 }
 
-function PlayerScores({ player, matches }: { player: Player; matches: Match[] }) {
+function PlayerScores({
+  player,
+  matches,
+  eloChange,
+}: {
+  player: Player;
+  matches: Match[];
+  eloChange: Map<string, Map<string, number>>;
+}) {
   const lines = playerResults(matches, player.id);
   const wins = lines.filter((line) => line.result === "win").length;
   const losses = lines.filter((line) => line.result === "loss").length;
@@ -847,7 +984,9 @@ function PlayerScores({ player, matches }: { player: Player; matches: Match[] })
             </div>
           </div>
           <ul className="mt-3 flex flex-col gap-1.5">
-            {lines.map((line) => (
+            {lines.map((line) => {
+              const swing = eloChange.get(line.id)?.get(player.id) ?? 0;
+              return (
               <li key={line.id} className="flex items-center gap-2 text-sm">
                 {line.result === "win" ? (
                   <Check className="size-4 shrink-0 text-brass" aria-label="Winst" />
@@ -858,9 +997,16 @@ function PlayerScores({ player, matches }: { player: Player; matches: Match[] })
                 )}
                 <span className="shrink-0 text-ivory-dim">{fmtWhen(line.playedAt)}</span>
                 <span className="shrink-0 font-display text-lg leading-none italic tabular-nums">{line.score}</span>
+                <span
+                  className={cn("shrink-0 tabular-nums", swing > 0 ? "text-brass" : "text-ivory-dim")}
+                  title="Elo"
+                >
+                  {fmtEloDelta(swing)}
+                </span>
                 <span className="min-w-0 truncate">{line.against}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
           {wins + losses > 0 ? (
             <div className="mt-5 border-t border-line pt-4">
@@ -920,8 +1066,6 @@ function PlayerPanel({
   amOwner,
   players,
   onChallenge,
-  onInvite,
-  onFriendly,
   onResult,
   onNudge,
   onRemove,
@@ -939,16 +1083,12 @@ function PlayerPanel({
   onRemove?: () => void;
 }) {
   const upward = me ? canChallengeUp(me.rank, player.rank, range) : false;
-  const downward = me ? canInviteDown(me.rank, player.rank, range) : false;
-  const tooFar = Boolean(me && player.id !== me.id && !upward && !downward);
-  const betweenUs = me ? legalDistance(me.rank, player.rank, range) : false;
-  const ownerOpponents = players.filter((other) => legalDistance(other.rank, player.rank, range));
   const places = me ? Math.abs(me.rank - player.rank) : 0;
+  const others = players.filter((other) => other.id !== player.id && isOnWall(other));
   let hint = "Kies een actie, of tik een ander briefje.";
-  if (me && player.id === me.id) hint = "Dit ben jij. Anderen kunnen jou uitdagen als ze dichtbij genoeg staan.";
-  else if (upward) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} boven je.`;
-  else if (downward) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} onder je.`;
-  else if (tooFar) hint = `${player.name} staat te ver weg. Uitnodigen kan wel, om vrij te spelen. De piramide blijft staan.`;
+  if (me && player.id === me.id) hint = "Dit ben jij. Iedereen kan je uitdagen.";
+  else if (me && upward) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} boven je. Winst schuift de piramide.`;
+  else if (me) hint = `${player.name} staat ${places} ${places === 1 ? "plaats" : "plaatsen"} van je af. De Elo wijzigt, de piramide alleen als de regels dat toelaten.`;
 
   return (
     <section className="panel p-3">
@@ -959,31 +1099,26 @@ function PlayerPanel({
           <p className="text-sm text-ivory-dim">{hint}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {upward ? (
+          {me && player.id !== me.id ? (
             <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onChallenge}>
               Uitdagen
             </button>
           ) : null}
-          {downward ? (
-            <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onInvite}>
-              Uitnodigen
-            </button>
-          ) : null}
-          {tooFar ? (
-            <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={onFriendly}>
-              Uitnodigen
-            </button>
-          ) : null}
-          {me && betweenUs ? (
+          {me && player.id !== me.id ? (
             <button type="button" className="btn btn-ivory h-10 min-h-0 text-sm" onClick={() => onResult(me.id, player.id, true)}>
               Uitslag
             </button>
           ) : null}
-          {amOwner && ownerOpponents[0] && !(me && betweenUs) ? (
+          {amOwner && others.length > 0 ? (
             <button
               type="button"
-              className="btn btn-ivory h-10 min-h-0 text-sm"
-              onClick={() => onResult(player.id, ownerOpponents[0]!.id, false)}
+              className="btn btn-ghost h-10 min-h-0 text-sm"
+              onClick={() => {
+                const left = player.id === me?.id ? others[0] : player;
+                const right = others.find((other) => other.id !== left?.id);
+                if (!left || !right) return;
+                onResult(left.id, right.id, false);
+              }}
             >
               Uitslag invoeren
             </button>
@@ -1115,39 +1250,51 @@ function labelStatus(status: Challenge["status"]) {
   return "ingetrokken";
 }
 
+function matchEloLine(match: Match, eloChange: Map<string, Map<string, number>>) {
+  const applied = eloChange.get(match.id);
+  if (!applied) return "";
+  const people =
+    match.sides && match.sides.length >= 2
+      ? match.sides
+      : [
+          { id: match.winnerId ?? "", name: match.winnerName },
+          { id: match.loserId ?? "", name: match.loserName },
+        ];
+  return people
+    .filter((person) => person.id)
+    .map((person) => `${person.name} ${fmtEloDelta(applied.get(person.id) ?? 0)}`)
+    .join(" · ");
+}
+
 function MatchList({
   matches,
+  eloChange,
   onEdit,
+  onDelete,
   canEdit,
   empty = "Nog geen partijen. De eerste uitslag komt hier te staan.",
 }: {
   matches: Match[];
+  eloChange: Map<string, Map<string, number>>;
   onEdit?: (match: Match) => void;
+  onDelete?: (match: Match) => void;
   canEdit?: (match: Match) => boolean;
   empty?: string;
 }) {
-  const [showOlder, setShowOlder] = useState(false);
-  const cutoff = Date.now() - 6 * 24 * 60 * 60 * 1000;
-  const recent = matches.filter((match) => new Date(match.playedAt).getTime() >= cutoff);
-  const shown = showOlder ? matches : recent;
+  const shown = [...matches].sort((a, b) => {
+    const aAt = new Date(a.playedAt).getTime();
+    const bAt = new Date(b.playedAt).getTime();
+    return bAt - aAt || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime() || b.id.localeCompare(a.id);
+  });
   if (matches.length === 0) {
     return <p className="panel p-4 text-sm text-ivory-dim">{empty}</p>;
   }
   return (
-    <div className="flex flex-col gap-3">
-      {recent.length < matches.length ? (
-        <label className="flex items-center gap-2 self-end text-sm">
-          <input type="checkbox" checked={showOlder} onChange={(event) => setShowOlder(event.target.checked)} />
-          Oudere uitslagen
-        </label>
-      ) : null}
-      {shown.length === 0 ? (
-        <p className="panel p-4 text-sm text-ivory-dim">Geen uitslagen in de afgelopen 6 dagen.</p>
-      ) : (
     <ul className="flex flex-col gap-2">
       {shown.map((match) => (
         <li key={match.id} className="panel flex flex-col gap-2 p-4">
           <p className="font-display text-xl italic">{matchSummary(match)}</p>
+          <p className="text-sm tabular-nums text-ivory-dim">{matchEloLine(match, eloChange)}</p>
           <p className="text-sm text-ivory-dim">
             {fmtWhen(match.playedAt)}
             {match.note ? ` · ${match.note}` : ""}
@@ -1157,11 +1304,14 @@ function MatchList({
               Wijzig score
             </button>
           ) : null}
+          {onDelete ? (
+            <button type="button" className="btn btn-ghost h-10 min-h-0 self-start text-sm" onClick={() => onDelete(match)}>
+              <Trash2 className="size-4" /> Verwijderen
+            </button>
+          ) : null}
         </li>
       ))}
     </ul>
-      )}
-    </div>
   );
 }
 
@@ -1207,6 +1357,7 @@ function PlayersTab({
   bench,
   inviteCode,
   ladderName,
+  elo,
   onSelect,
   amOwner,
   onAdd,
@@ -1218,6 +1369,7 @@ function PlayersTab({
   bench: Player[];
   inviteCode?: string;
   ladderName: string;
+  elo: Map<string, number>;
   onSelect: (id: string) => void;
   amOwner: boolean;
   onAdd?: (name: string) => void;
@@ -1227,10 +1379,33 @@ function PlayersTab({
 }) {
   const [name, setName] = useState("");
   const [onlyJoined, setOnlyJoined] = useState(true);
-  const shown = onlyJoined ? players.filter((player) => player.userId) : players;
+  const [sort, setSort] = useState<"piramide" | "elo">("piramide");
+  const shown = (onlyJoined ? players.filter((player) => player.userId) : players)
+    .slice()
+    .sort((a, b) =>
+      sort === "elo"
+        ? (elo.get(b.id) ?? ELO_START) - (elo.get(a.id) ?? ELO_START) || a.rank - b.rank
+        : a.rank - b.rank,
+    );
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          aria-pressed={sort === "piramide"}
+          className={cn("btn h-10 min-h-0 text-sm", sort === "piramide" ? "btn-brass" : "btn-ghost")}
+          onClick={() => setSort("piramide")}
+        >
+          Piramide
+        </button>
+        <button
+          type="button"
+          aria-pressed={sort === "elo"}
+          className={cn("btn h-10 min-h-0 text-sm", sort === "elo" ? "btn-brass" : "btn-ghost")}
+          onClick={() => setSort("elo")}
+        >
+          Elo
+        </button>
         <button
           type="button"
           aria-pressed={onlyJoined}
@@ -1244,7 +1419,7 @@ function PlayersTab({
         <p className="panel px-4 py-6 text-sm text-ivory-dim">Nog niemand heeft de code gebruikt.</p>
       ) : (
         <ol className="panel divide-y divide-line">
-          {shown.map((player) => {
+          {shown.map((player, index) => {
             const seatUrl = inviteCode ? joinUrl(inviteCode, player.id) : "";
             return (
               <li key={player.id} className="flex items-center gap-2 pr-2">
@@ -1253,12 +1428,14 @@ function PlayersTab({
                   onClick={() => onSelect(player.id)}
                   className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
                 >
-                  <span className="w-8 shrink-0 tabular-nums text-brass">{player.rank}</span>
+                  <span className="w-8 shrink-0 tabular-nums text-brass">{sort === "elo" ? index + 1 : player.rank}</span>
                   <span className="font-display flex-1 truncate text-lg italic">{player.name}</span>
                   <span className="text-right text-sm text-ivory-dim">
-                    {player.userId ? "aangemeld" : ""}
-                    {player.userId && player.stippen > 0 ? " · " : ""}
-                    {player.stippen > 0 ? `${player.stippen} stip` : ""}
+                    <span className="tabular-nums text-ivory" title="Elo">
+                      {elo.get(player.id) ?? ELO_START}
+                    </span>
+                    {player.userId ? " · aangemeld" : ""}
+                    {player.stippen > 0 ? ` · ${player.stippen} stip` : ""}
                   </span>
                 </button>
                 {!player.userId && seatUrl ? (
@@ -1284,6 +1461,9 @@ function PlayersTab({
             {bench.map((player) => (
               <li key={player.id} className="flex items-center gap-2 px-4 py-3">
                 <span className="font-display flex-1 text-lg italic">{player.name}</span>
+                <span className="tabular-nums text-sm text-ivory" title="Elo">
+                  {elo.get(player.id) ?? ELO_START}
+                </span>
                 <span className="text-sm text-ivory-dim">{player.userId ? "aangemeld" : "naam"}</span>
                 {onRestore ? (
                   <button type="button" className="btn btn-brass h-10 min-h-0 text-sm" onClick={() => onRestore(player.id)}>
@@ -1465,18 +1645,20 @@ function ResultDialog({
     note: string;
     challengeId: string | null;
     matchId?: string;
+    playedOn: string;
+    playedTime: string;
   }) => void;
 }) {
   const [leftScore, setLeftScore] = useState(draft?.leftScore ?? 1);
   const [rightScore, setRightScore] = useState(draft?.rightScore ?? 0);
   const [note, setNote] = useState(draft?.note ?? "");
+  const [playedOn, setPlayedOn] = useState(draft?.playedOn || amsterdamDate());
+  const [playedTime, setPlayedTime] = useState(draft?.playedTime || amsterdamTime());
   const left = players.find((player) => player.id === draft?.leftId) ?? null;
   const right = players.find((player) => player.id === draft?.rightId) ?? null;
   const wall = players.filter(isOnWall);
   const opponents =
-    left && !draft?.lockPair
-      ? wall.filter((player) => legalDistance(player.rank, left.rank, range))
-      : [];
+    left && !draft?.lockPair ? wall.filter((player) => player.id !== left.id) : [];
   const editing = Boolean(draft?.matchId);
 
   useEffect(() => {
@@ -1484,6 +1666,8 @@ function ResultDialog({
     setLeftScore(draft.leftScore ?? 1);
     setRightScore(draft.rightScore ?? 0);
     setNote(draft.note ?? "");
+    setPlayedOn(draft.playedOn || amsterdamDate());
+    setPlayedTime(draft.playedTime || amsterdamTime());
   }, [draft]);
 
   const preview = useMemo(() => {
@@ -1523,7 +1707,7 @@ function ResultDialog({
           rightScore,
         );
       }
-      return settleMatch(wall, left.id, right.id, leftScore, rightScore, range);
+      return scoreMatch(wall, left.id, right.id, leftScore, rightScore, range);
     } catch {
       return null;
     }
@@ -1571,9 +1755,25 @@ function ResultDialog({
                   ? `${preview.winnerName} verdedigt de troon. +1 stip.`
                   : preview.swapped
                     ? `${preview.winnerName} en ${preview.loserName} wisselen van plaats.`
-                    : `${preview.winnerName} wint. De piramide blijft staan.`
-              : "Deze twee staan te ver uit elkaar voor een geldige partij."}
+                    : `${preview.winnerName} wint. De piramide blijft staan. De Elo wijzigt wel.`
+              : "Deze uitslag kan niet worden opgeslagen."}
           </p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-sm">
+              Datum
+              <input
+                type="date"
+                className="field-ink"
+                value={playedOn}
+                max={amsterdamDate()}
+                onChange={(event) => setPlayedOn(event.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Tijd
+              <input type="time" className="field-ink" value={playedTime} onChange={(event) => setPlayedTime(event.target.value)} />
+            </label>
+          </div>
           <label className="mt-3 flex flex-col gap-1 text-sm">
             Notitie
             <input
@@ -1597,6 +1797,8 @@ function ResultDialog({
                   leftScore,
                   rightScore,
                   note,
+                  playedOn,
+                  playedTime,
                   challengeId: draft.challengeId,
                   matchId: draft.matchId,
                 })
@@ -1625,18 +1827,22 @@ function GroupResultDialog({
   players: Player[];
   mustPlay: string | null;
   onClose: () => void;
-  onSubmit: (input: { sides: { id: string; score: number }[]; note: string }) => void;
+  onSubmit: (input: { sides: { id: string; score: number }[]; note: string; playedOn: string; playedTime: string }) => void;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [note, setNote] = useState("");
-  const wall = players.filter(isOnWall).sort((a, b) => a.rank - b.rank);
+  const [playedOn, setPlayedOn] = useState(amsterdamDate());
+  const [playedTime, setPlayedTime] = useState(amsterdamTime());
+  const wall = players.filter((player) => isOnWall(player) && player.userId).sort((a, b) => a.rank - b.rank);
 
   useEffect(() => {
     if (!open) return;
     setPicked([]);
     setScores({});
     setNote("");
+    setPlayedOn(amsterdamDate());
+    setPlayedTime(amsterdamTime());
   }, [open]);
   const sides = picked.map((id) => ({ id, score: scores[id] ?? 0 }));
   const missingSelf = Boolean(mustPlay && !picked.includes(mustPlay));
@@ -1681,6 +1887,9 @@ function GroupResultDialog({
             hangen.
           </Dialog.Description>
           <ul className="mt-4 flex max-h-72 flex-col gap-2 overflow-y-auto">
+            {wall.length === 0 ? (
+              <li className="text-sm text-ink/70">Nog geen actieve deelnemers.</li>
+            ) : null}
             {wall.map((player) => {
               const on = picked.includes(player.id);
               return (
@@ -1713,6 +1922,22 @@ function GroupResultDialog({
             })}
           </ul>
           <p className="mt-3 text-sm text-ink/80">{hint}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-sm">
+              Datum
+              <input
+                type="date"
+                className="field-ink"
+                value={playedOn}
+                max={amsterdamDate()}
+                onChange={(event) => setPlayedOn(event.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Tijd
+              <input type="time" className="field-ink" value={playedTime} onChange={(event) => setPlayedTime(event.target.value)} />
+            </label>
+          </div>
           <label className="mt-3 flex flex-col gap-1 text-sm">
             Notitie
             <input
@@ -1728,7 +1953,7 @@ function GroupResultDialog({
               type="button"
               className="btn btn-ink flex-1"
               disabled={!preview || missingSelf}
-              onClick={() => onSubmit({ sides, note })}
+              onClick={() => onSubmit({ sides, note, playedOn, playedTime })}
             >
               Vastleggen
             </button>
