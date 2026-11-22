@@ -8,6 +8,23 @@ export type Release = {
 
 export const RELEASES: Release[] = [
   {
+    version: 32,
+    date: "2026-11-22",
+    notes: ["Bekende CVE's in Better Auth, Zod en Seroval zijn bijgewerkt."],
+  },
+  {
+    version: 31,
+    date: "2026-11-21",
+    notes: ["Onder het cirkeldiagram op Home staat een link naar de statistieken."],
+  },
+  {
+    version: 30,
+    date: "2026-11-21",
+    notes: [
+      "Een nieuwe uitslag vul je in door op je tegenstander en daarna op de winnaar te tikken.",
+    ],
+  },
+  {
     version: 29,
     date: "2026-11-20",
     notes: [
