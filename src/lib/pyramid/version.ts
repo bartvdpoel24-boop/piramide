@@ -8,6 +8,11 @@ export type Release = {
 
 export const RELEASES: Release[] = [
   {
+    version: 33,
+    date: "2026-11-22",
+    notes: ["CVE in minimatch (typescript-eslint) is bijgewerkt."],
+  },
+  {
     version: 32,
     date: "2026-11-22",
     notes: ["Bekende CVE's in Better Auth, Zod en Seroval zijn bijgewerkt."],
